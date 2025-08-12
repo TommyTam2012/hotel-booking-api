@@ -124,6 +124,11 @@ class ChatIn(BaseModel):
 
 @app.post("/chat")
 def chat(in_: ChatIn):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing OPENAI_API_KEY")
+
+    client = OpenAI(api_key=api_key)
     try:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -137,4 +142,3 @@ def chat(in_: ChatIn):
         return {"reply": resp.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
-
