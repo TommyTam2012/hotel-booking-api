@@ -125,4 +125,17 @@ class ChatIn(BaseModel):
 
 @app.post("/chat")
 def chat(in_: ChatIn):
-    return {"reply": f"Echo: {in_.message}"}
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a concise, helpful assistant."},
+                {"role": "user", "content": in_.message},
+            ],
+            max_tokens=300,
+            temperature=0.7,
+        )
+        return {"reply": resp.choices[0].message.content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
+
