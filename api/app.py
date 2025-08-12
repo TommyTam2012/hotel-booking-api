@@ -1,11 +1,13 @@
 # app.py
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
-import sqlite3
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel  # or EmailStr if you want validation
 from typing import Optional, List, Dict, Any
-from fastapi.middleware.cors import CORSMiddleware  # <-- CORS import
+import os
+import sqlite3
 
-DB_PATH = "bcm.db"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "bcm.db")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -14,17 +16,14 @@ def get_db():
 
 app = FastAPI(title="BCM Demo API")
 
-# ---- CORS Middleware ----
+# CORS (dev-safe defaults)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, change to ["https://yourdomain.com"]
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # set True only with explicit origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
-import os, sqlite3
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bcm.db")  # ensure correct path
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -50,7 +49,6 @@ def init_db():
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
-        # seed one FAQ so /faq/TEST_INTENT works
         c.execute("""
         INSERT OR IGNORE INTO faq(intent, question, answer)
         VALUES ('TEST_INTENT','Test Q?','Test A.');
@@ -61,33 +59,24 @@ def init_db():
 def on_startup():
     init_db()
 
-
-# ---- Health check ----
 @app.get("/health")
 def health():
     return {"ok": True}
 
-# ---- Get FAQ by intent ----
 @app.get("/faq/{intent}")
 def get_faq(intent: str):
     with get_db() as conn:
-        cur = conn.execute(
+        row = conn.execute(
             "SELECT question, answer FROM faq WHERE intent = ?",
             (intent,)
-        )
-        row = cur.fetchone()
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="FAQ not found")
-        return {
-            "intent": intent,
-            "question": row["question"],
-            "answer": row["answer"],
-        }
+        return {"intent": intent, "question": row["question"], "answer": row["answer"]}
 
-# ---- Enrollment model ----
 class EnrollmentIn(BaseModel):
     full_name: str
-    email: str
+    email: str  # swap to EmailStr if desired
     phone: Optional[str] = None
     program_code: Optional[str] = None
     cohort_code: Optional[str] = None
@@ -95,41 +84,25 @@ class EnrollmentIn(BaseModel):
     notes: Optional[str] = None
     source: Optional[str] = "avatar"
 
-# ---- Add new enrollment ----
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
     with get_db() as conn:
-        conn.execute(
-            """
+        conn.execute("""
             INSERT INTO enrollments
               (full_name, email, phone, program_code, cohort_code, timezone, notes, source)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                data.full_name,
-                data.email,
-                data.phone,
-                data.program_code,
-                data.cohort_code,
-                data.timezone,
-                data.notes,
-                data.source,
-            ),
-        )
+        """, (
+            data.full_name, data.email, data.phone, data.program_code,
+            data.cohort_code, data.timezone, data.notes, data.source
+        ))
         conn.commit()
     return {"status": "ok"}
 
-# ---- Recent enrollments (for LangChain/HeyGen reads) ----
 @app.get("/enrollments/recent")
 def recent_enrollments(
     limit: int = Query(10, ge=1, le=100),
     source: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Returns the most recent enrollments.
-    - limit: 1..100 (default 10)
-    - source: optional filter, e.g. 'avatar', 'docs', 'agent', 'form'
-    """
     sql = """
       SELECT id, full_name, email, program_code, source, created_at
       FROM enrollments
@@ -144,10 +117,10 @@ def recent_enrollments(
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
-# ---- Chat endpoint for LangChain/HeyGen ----
+
 class ChatIn(BaseModel):
     message: str
+
 @app.post("/chat")
 def chat(in_: ChatIn):
-    # For now, just echo the message — replace with LangChain call later
     return {"reply": f"Echo: {in_.message}"}
