@@ -5,6 +5,7 @@ from pydantic import BaseModel  # or EmailStr if you want validation
 from typing import Optional, List, Dict, Any
 import os
 import sqlite3
+from openai import OpenAI
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "bcm.db")
