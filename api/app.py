@@ -16,6 +16,7 @@ def get_db():
     return conn
 
 app = FastAPI(title="BCM Demo API")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # CORS (dev-safe defaults)
 app.add_middleware(
