@@ -105,3 +105,10 @@ def recent_enrollments(
     with get_db() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+# ---- Chat endpoint for LangChain/HeyGen ----
+class ChatIn(BaseModel):
+    message: str
+@app.post("/chat")
+def chat(in_: ChatIn):
+    # For now, just echo the message — replace with LangChain call later
+    return {"reply": f"Echo: {in_.message}"}
