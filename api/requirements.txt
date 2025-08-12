@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+pydantic
+sqlite3-binary ; sys_platform != "win32"
