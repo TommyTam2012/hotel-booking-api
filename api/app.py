@@ -22,6 +22,45 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+import os, sqlite3
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "bcm.db")  # ensure correct path
+
+def init_db():
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS faq(
+          intent TEXT PRIMARY KEY,
+          question TEXT,
+          answer TEXT
+        );
+        """)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS enrollments(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT,
+          email TEXT,
+          phone TEXT,
+          program_code TEXT,
+          cohort_code TEXT,
+          timezone TEXT,
+          notes TEXT,
+          source TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        # seed one FAQ so /faq/TEST_INTENT works
+        c.execute("""
+        INSERT OR IGNORE INTO faq(intent, question, answer)
+        VALUES ('TEST_INTENT','Test Q?','Test A.');
+        """)
+        conn.commit()
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
 
 # ---- Health check ----
 @app.get("/health")
