@@ -1,8 +1,9 @@
 # api/app.py
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel  # swap to EmailStr if desired
 from typing import Optional, List, Dict, Any
 from pathlib import Path
@@ -69,6 +70,19 @@ def init_db():
 def on_startup():
     init_db()
 
+# --- Admin key security (Swagger-friendly) ---
+ADMIN_KEY = os.getenv("ADMIN_KEY")
+API_KEY_NAME = "X-Admin-Key"
+api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+
+def require_admin(x_admin_key: str = Security(api_key_header)):
+    if not ADMIN_KEY:
+        # Fail closed if the server isn't configured
+        raise HTTPException(status_code=500, detail="ADMIN_KEY not configured on server")
+    if x_admin_key != ADMIN_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return True
+
 # --- Convenience: open the form by default ---
 @app.get("/")
 def root():
@@ -78,6 +92,7 @@ def root():
 def health():
     return {"ok": True}
 
+# Public example: read-only FAQ by intent
 @app.get("/faq/{intent}")
 def get_faq(intent: str):
     with get_db() as conn:
@@ -102,7 +117,10 @@ class EnrollmentIn(BaseModel):
     notes: Optional[str] = None
     source: Optional[str] = "avatar"
 
-# --- Routes ---
+class ChatIn(BaseModel):
+    message: str
+
+# --- Routes (public write for enroll form, admin read for dashboard) ---
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
     full_name_val = data.full_name or data.name
@@ -124,7 +142,8 @@ def enroll(data: EnrollmentIn):
         conn.commit()
     return {"status": "ok"}
 
-@app.get("/enrollments/recent")
+# Admin-only: recent enrollments (dashboard/listing)
+@app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
 def recent_enrollments(
     limit: int = Query(10, ge=1, le=100),
     source: Optional[str] = None,
@@ -144,9 +163,12 @@ def recent_enrollments(
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-class ChatIn(BaseModel):
-    message: str
+# Admin-only: quick self-check
+@app.get("/admin/health", dependencies=[Security(require_admin)], tags=["admin"])
+def admin_health():
+    return {"ok": True, "msg": "Admin access confirmed."}
 
+# --- OpenAI chat passthrough (public demo) ---
 @app.post("/chat")
 def chat(in_: ChatIn):
     api_key = os.getenv("OPENAI_API_KEY")
@@ -167,3 +189,5 @@ def chat(in_: ChatIn):
         return {"reply": resp.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
+
+
