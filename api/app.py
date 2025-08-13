@@ -1,36 +1,39 @@
-# app.py
+# api/app.py
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel  # or EmailStr if you want validation
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel  # swap to EmailStr if desired
 from typing import Optional, List, Dict, Any
+from pathlib import Path
 import os
 import sqlite3
 from openai import OpenAI
-from fastapi.staticfiles import StaticFiles
-from pathlib import Path
 
-BASE_DIR = Path(__file__).parent
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+# --- Paths ---
+APP_DIR = Path(__file__).parent.resolve()
+DB_PATH = str(APP_DIR / "bcm.db")
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.join(BASE_DIR, "bcm.db")
-
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
+# --- App ---
 app = FastAPI(title="BCM Demo API")
+
+# Static files (serve /static/enroll.html, etc.)
+app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 # CORS (dev-safe defaults)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,  # set True only with explicit origins
+    allow_credentials=False,   # set True only with explicit origins
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- DB helpers ---
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -66,6 +69,11 @@ def init_db():
 def on_startup():
     init_db()
 
+# --- Convenience: open the form by default ---
+@app.get("/")
+def root():
+    return RedirectResponse(url="/static/enroll.html")
+
 @app.get("/health")
 def health():
     return {"ok": True}
@@ -81,9 +89,12 @@ def get_faq(intent: str):
             raise HTTPException(status_code=404, detail="FAQ not found")
         return {"intent": intent, "question": row["question"], "answer": row["answer"]}
 
+# --- Models ---
 class EnrollmentIn(BaseModel):
-    full_name: str
-    email: str  # swap to EmailStr if desired
+    # Accept either 'full_name' or 'name' (from the simple HTML form)
+    full_name: Optional[str] = None
+    name: Optional[str] = None
+    email: str
     phone: Optional[str] = None
     program_code: Optional[str] = None
     cohort_code: Optional[str] = None
@@ -91,17 +102,25 @@ class EnrollmentIn(BaseModel):
     notes: Optional[str] = None
     source: Optional[str] = "avatar"
 
+# --- Routes ---
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
+    full_name_val = data.full_name or data.name
+    if not full_name_val:
+        raise HTTPException(status_code=422, detail="full_name or name is required")
+
     with get_db() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO enrollments
               (full_name, email, phone, program_code, cohort_code, timezone, notes, source)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            data.full_name, data.email, data.phone, data.program_code,
-            data.cohort_code, data.timezone, data.notes, data.source
-        ))
+            """,
+            (
+                full_name_val, data.email, data.phone, data.program_code,
+                data.cohort_code, data.timezone, data.notes, data.source
+            ),
+        )
         conn.commit()
     return {"status": "ok"}
 
@@ -114,7 +133,7 @@ def recent_enrollments(
       SELECT id, full_name, email, program_code, source, created_at
       FROM enrollments
     """
-    params = []
+    params: List[Any] = []
     if source:
         sql += " WHERE source = ?"
         params.append(source)
