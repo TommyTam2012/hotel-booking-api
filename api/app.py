@@ -1,10 +1,9 @@
-# api/app.py
 from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel  # swap to EmailStr if desired
+from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import os
@@ -21,11 +20,11 @@ app = FastAPI(title="BCM Demo API")
 # Static files (serve /static/enroll.html, etc.)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
-# CORS (dev-safe defaults)
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,   # set True only with explicit origins
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,6 +38,7 @@ def get_db():
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         c = conn.cursor()
+        # FAQ table
         c.execute("""
         CREATE TABLE IF NOT EXISTS faq(
           intent TEXT PRIMARY KEY,
@@ -46,6 +46,7 @@ def init_db():
           answer TEXT
         );
         """)
+        # Enrollments table
         c.execute("""
         CREATE TABLE IF NOT EXISTS enrollments(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +61,19 @@ def init_db():
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
+        # Courses table
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS courses(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          fee TEXT,
+          start_date TEXT,
+          end_date TEXT,
+          time TEXT,
+          venue TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
         c.execute("""
         INSERT OR IGNORE INTO faq(intent, question, answer)
         VALUES ('TEST_INTENT','Test Q?','Test A.');
@@ -70,7 +84,7 @@ def init_db():
 def on_startup():
     init_db()
 
-# --- Admin key security (Swagger-friendly) ---
+# --- Admin key security ---
 ADMIN_KEY = os.getenv("ADMIN_KEY")
 API_KEY_NAME = "X-Admin-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
@@ -82,7 +96,7 @@ def require_admin(x_admin_key: str = Security(api_key_header)):
         raise HTTPException(status_code=403, detail="Forbidden")
     return True
 
-# --- Convenience: open the form by default ---
+# --- Root ---
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/enroll.html")
@@ -91,7 +105,7 @@ def root():
 def health():
     return {"ok": True}
 
-# Public example: read-only FAQ by intent
+# --- FAQ ---
 @app.get("/faq/{intent}")
 def get_faq(intent: str):
     with get_db() as conn:
@@ -118,7 +132,15 @@ class EnrollmentIn(BaseModel):
 class ChatIn(BaseModel):
     message: str
 
-# --- Routes (public write for enroll form, admin read for dashboard) ---
+class CourseIn(BaseModel):
+    name: str
+    fee: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    time: Optional[str] = None
+    venue: Optional[str] = None
+
+# --- Enrollments ---
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
     full_name_val = data.full_name or data.name
@@ -139,7 +161,6 @@ def enroll(data: EnrollmentIn):
         )
         conn.commit()
 
-    # Return a backend-driven success message so Swagger and the HTML form can show the same text
     return {
         "status": "ok",
         "message": "Thank you! Your enrollment has been received.",
@@ -151,7 +172,6 @@ def enroll(data: EnrollmentIn):
         "notes": data.notes
     }
 
-# Admin-only: recent enrollments (dashboard/listing) — now includes `notes`
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
 def recent_enrollments(
     limit: int = Query(10, ge=1, le=100),
@@ -172,12 +192,44 @@ def recent_enrollments(
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-# Admin-only: quick self-check
 @app.get("/admin/health", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_health():
     return {"ok": True, "msg": "Admin access confirmed."}
 
-# --- OpenAI chat passthrough (public demo) ---
+# --- Courses ---
+@app.post("/courses", dependencies=[Security(require_admin)], tags=["courses"])
+def add_course(course: CourseIn):
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO courses (name, fee, start_date, end_date, time, venue)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (course.name, course.fee, course.start_date, course.end_date, course.time, course.venue))
+        conn.commit()
+    return {"status": "ok", "message": "Course added successfully", "course": course}
+
+@app.get("/courses", tags=["courses"])
+def list_courses() -> List[Dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            ORDER BY created_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
+@app.get("/courses/{course_id}", tags=["courses"])
+def get_course(course_id: int) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            WHERE id = ?
+        """, (course_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return dict(row)
+
+# --- OpenAI Chat ---
 @app.post("/chat")
 def chat(in_: ChatIn):
     api_key = os.getenv("OPENAI_API_KEY")
