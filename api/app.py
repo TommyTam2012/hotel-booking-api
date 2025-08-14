@@ -77,7 +77,6 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
     if not ADMIN_KEY:
-        # Fail closed if the server isn't configured
         raise HTTPException(status_code=500, detail="ADMIN_KEY not configured on server")
     if x_admin_key != ADMIN_KEY:
         raise HTTPException(status_code=403, detail="Forbidden")
@@ -106,7 +105,6 @@ def get_faq(intent: str):
 
 # --- Models ---
 class EnrollmentIn(BaseModel):
-    # Accept either 'full_name' or 'name' (from the simple HTML form)
     full_name: Optional[str] = None
     name: Optional[str] = None
     email: str
@@ -141,18 +139,17 @@ def enroll(data: EnrollmentIn):
         )
         conn.commit()
 
- # Return a backend-driven success message so Swagger and the HTML form can show the same text
-return {
-    "status": "ok",
-    "message": "Thank you! Your enrollment has been received.",
-    # Optional echoes so you can verify values in Swagger if needed
-    "full_name": full_name_val,
-    "email": data.email,
-    "program_code": data.program_code,
-    "cohort_code": data.cohort_code,
-    "source": data.source,
-    "notes": data.notes   # <-- this will show your message box text
-}
+    # Return a backend-driven success message so Swagger and the HTML form can show the same text
+    return {
+        "status": "ok",
+        "message": "Thank you! Your enrollment has been received.",
+        "full_name": full_name_val,
+        "email": data.email,
+        "program_code": data.program_code,
+        "cohort_code": data.cohort_code,
+        "source": data.source,
+        "notes": data.notes   # <-- This will show your message box text in Swagger
+    }
 
 # Admin-only: recent enrollments (dashboard/listing)
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
@@ -201,4 +198,3 @@ def chat(in_: ChatIn):
         return {"reply": resp.choices[0].message.content}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
-
