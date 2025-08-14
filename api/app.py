@@ -148,17 +148,17 @@ def enroll(data: EnrollmentIn):
         "program_code": data.program_code,
         "cohort_code": data.cohort_code,
         "source": data.source,
-        "notes": data.notes   # <-- This will show your message box text in Swagger
+        "notes": data.notes
     }
 
-# Admin-only: recent enrollments (dashboard/listing)
+# Admin-only: recent enrollments (dashboard/listing) — now includes `notes`
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
 def recent_enrollments(
     limit: int = Query(10, ge=1, le=100),
     source: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     sql = """
-      SELECT id, full_name, email, program_code, source, created_at
+      SELECT id, full_name, email, phone, program_code, cohort_code, timezone, notes, source, created_at
       FROM enrollments
     """
     params: List[Any] = []
