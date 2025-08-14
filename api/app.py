@@ -142,7 +142,8 @@ def enroll(data: EnrollmentIn):
         conn.commit()
 
     # Return a backend-driven success message so Swagger and the HTML form can show the same text
-    return {
+    # Return a backend-driven success message so Swagger and the HTML form can show the same text
+return {
     "status": "ok",
     "message": "Thank you! Your enrollment has been received.",
     # Optional echoes so you can verify values in Swagger if needed
@@ -153,7 +154,6 @@ def enroll(data: EnrollmentIn):
     "source": data.source,
     "notes": data.notes   # <-- this will show your message box text
 }
-
 # Admin-only: recent enrollments (dashboard/listing)
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
 def recent_enrollments(
