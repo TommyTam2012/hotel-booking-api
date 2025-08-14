@@ -6,17 +6,17 @@
   <title>BCM Enrollment</title>
   <meta name="description" content="Simple enrollment form that posts to the BCM API /enroll endpoint." />
 
+  <!-- Basic, clean, centered layout -->
   <style>
-    /* --- Same CSS as before --- */
     :root {
-      --bg: #0f172a;
-      --card: #0b1220;
-      --text: #e5e7eb;
-      --muted: #94a3b8;
-      --accent: #60a5fa;
-      --accent-dark: #3b82f6;
-      --error: #f87171;
-      --ok: #34d399;
+      --bg: #0f172a; /* slate-900 */
+      --card: #0b1220; /* near-slate */
+      --text: #e5e7eb; /* gray-200 */
+      --muted: #94a3b8; /* slate-400 */
+      --accent: #60a5fa; /* blue-400 */
+      --accent-dark: #3b82f6; /* blue-500 */
+      --error: #f87171; /* red-400 */
+      --ok: #34d399; /* green-400 */
     }
     html, body {
       height: 100%;
@@ -25,12 +25,20 @@
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
     }
-    .wrap { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+    .wrap {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
     .card {
-      width: 100%; max-width: 560px; background: rgba(17, 24, 39, 0.65);
+      width: 100%;
+      max-width: 560px;
+      background: rgba(17, 24, 39, 0.65);
       backdrop-filter: blur(8px);
       border: 1px solid rgba(148, 163, 184, 0.2);
-      border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
       padding: 24px;
     }
     h1 { font-size: 1.5rem; margin: 0 0 4px; }
@@ -38,8 +46,13 @@
     form { display: grid; gap: 14px; }
     label { font-size: 0.95rem; }
     input, select, textarea {
-      width: 100%; padding: 12px 14px; border-radius: 10px;
-      border: 1px solid rgba(148, 163, 184, 0.35); background: #0b1220; color: var(--text);
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: #0b1220;
+      color: var(--text);
+      outline: none;
     }
     input:focus, select:focus, textarea:focus {
       border-color: var(--accent);
@@ -48,8 +61,13 @@
     .row { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
     .actions { display: flex; gap: 10px; align-items: center; justify-content: flex-start; margin-top: 4px; }
     button {
-      padding: 12px 16px; border-radius: 10px; border: 1px solid var(--accent);
-      background: var(--accent); color: #0b1220; font-weight: 600; cursor: pointer;
+      padding: 12px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #0b1220;
+      font-weight: 600;
+      cursor: pointer;
     }
     button:hover { background: var(--accent-dark); border-color: var(--accent-dark); }
     .ghost { background: transparent; color: var(--text); border-color: rgba(148,163,184,0.35); }
@@ -64,7 +82,10 @@
   <div class="wrap">
     <div class="card">
       <h1>Enroll in BCM</h1>
-      <p class="sub">Quick sign-up. We’ll contact you shortly.</p>
+      <p class="sub">Quick sign‑up. We’ll contact you shortly.</p>
+
+      <!-- Toggle this block to reuse the same template for hotel booking later -->
+      <!-- For Hotel Booking: rename labels/fields (e.g., checkIn, checkOut, roomType, guests) and POST to your /book endpoint. -->
 
       <form id="enrollForm" novalidate>
         <div>
@@ -95,13 +116,22 @@
       </form>
 
       <p class="small" style="margin-top:16px">
-        Having issues? Make sure your API is live and CORS is enabled.
+        Having issues? Make sure your API is live and CORS is enabled. This page works from a file:// tab too.
       </p>
     </div>
   </div>
 
   <script>
+    // =========================
+    // 1) SET YOUR API ENDPOINT
+    // =========================
+    // If this HTML is hosted on the SAME origin as your FastAPI (e.g., served by that backend),
+    // you can leave API_BASE empty and the code will use relative "/enroll".
+    // Otherwise, set your Render URL here, e.g.:
+    //   const API_BASE = "https://bcm-demo.onrender.com";
     const API_BASE = "https://bcm-demo.onrender.com";
+
+    // Name of the endpoint (change to '/book' later for hotel booking template)
     const ENROLL_PATH = "/enroll";
 
     const form = document.getElementById('enrollForm');
@@ -116,6 +146,7 @@
       e.preventDefault();
       setStatus('', true);
 
+      // Basic front-end validation
       const name = form.name.value.trim();
       const email = form.email.value.trim();
       const phone = form.phone.value.trim();
@@ -126,40 +157,30 @@
         return;
       }
 
-      // Fixed: map to full_name and include source
-      const payload = {
-        full_name: name,
-        email,
-        phone,
-        notes,
-        source: "avatar"
-      };
+      const payload = { name, email, phone, notes };
 
       try {
-        const res = await fetch(API_BASE + ENROLL_PATH, {
+        const res = await fetch((API_BASE + ENROLL_PATH) || ENROLL_PATH, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
           mode: 'cors',
         });
 
+        // FastAPI common response: 200/201 with JSON
         if (!res.ok) {
           const text = await res.text();
           throw new Error(`HTTP ${res.status}: ${text}`);
         }
 
+        // Try reading JSON; fall back to text
         let data;
         try { data = await res.json(); } catch { data = await res.text(); }
 
-        // Show backend message if available
-        if (data.message) {
-          setStatus('✅ ' + data.message, true);
-        } else {
-          setStatus('✅ Thank you! Your enrollment has been received.', true);
-        }
-
-        console.log('Enroll success:', data);
+        // Show a friendly confirmation
+        setStatus('✅ Thank you! Your enrollment has been received.', true);
         form.reset();
+        console.log('Enroll success:', data);
       } catch (err) {
         console.error(err);
         setStatus('❌ Submission failed. Please check your API URL and try again.', false);
