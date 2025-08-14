@@ -199,4 +199,5 @@ def chat(in_: ChatIn):
         )
         return {"reply": resp.choices[0].message.content}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI error: {e}"}
+        raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
+
