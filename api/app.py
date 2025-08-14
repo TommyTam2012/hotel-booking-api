@@ -140,7 +140,18 @@ def enroll(data: EnrollmentIn):
             ),
         )
         conn.commit()
-    return {"status": "ok"}
+
+    # Return a backend-driven success message so Swagger and the HTML form can show the same text
+    return {
+        "status": "ok",
+        "message": "Thank you! Your enrollment has been received.",
+        # Optional echoes so you can verify values in Swagger if needed
+        "full_name": full_name_val,
+        "email": data.email,
+        "program_code": data.program_code,
+        "cohort_code": data.cohort_code,
+        "source": data.source
+    }
 
 # Admin-only: recent enrollments (dashboard/listing)
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
@@ -188,6 +199,4 @@ def chat(in_: ChatIn):
         )
         return {"reply": resp.choices[0].message.content}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OpenAI error: {e}")
-
-
+        raise HTTPException(status_code=500, detail=f"OpenAI error: {e}"}
