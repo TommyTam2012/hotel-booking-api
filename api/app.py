@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
 from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 import os
@@ -17,7 +17,7 @@ DB_PATH = str(APP_DIR / "bcm.db")
 # --- App ---
 app = FastAPI(title="BCM Demo API")
 
-# Static files (serve /static/enroll.html, etc.)
+# Static files (serve /static/*.html)
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
 # CORS
@@ -71,6 +71,29 @@ def init_db():
           end_date TEXT,
           time TEXT,
           venue TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        # Fees table (plan-level pricing; amount in cents for math, fee text OK too)
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS fees(
+          plan TEXT PRIMARY KEY,            -- e.g., 'GI'
+          amount INTEGER,                   -- cents (nullable if using fee_text)
+          currency TEXT DEFAULT 'HKD',
+          fee_text TEXT,                    -- optional pretty string, e.g., 'HK$1,280'
+          note TEXT,
+          effective_from TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        # Schedules table
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS schedules(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          season TEXT DEFAULT 'summer',     -- 'summer' | 'after_summer' | etc.
+          day TEXT NOT NULL,                -- Mon/Tue/Wed/Thu/Fri/Sat/Sun
+          start_time TEXT NOT NULL,         -- '17:30'
+          end_time TEXT NOT NULL,           -- '18:30'
+          label TEXT,                       -- e.g., 'GI™ Group A'
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
@@ -140,6 +163,39 @@ class CourseIn(BaseModel):
     time: Optional[str] = None
     venue: Optional[str] = None
 
+# Fees/Schedule models
+class FeeIn(BaseModel):
+    plan: str = Field(examples=["GI"])
+    amount: Optional[int] = Field(default=None, example=128000, description="Amount in cents")
+    currency: str = "HKD"
+    fee_text: Optional[str] = Field(default=None, example="HK$1,280")
+    note: Optional[str] = None
+
+class FeeOut(FeeIn):
+    effective_from: Optional[str] = None
+
+class ScheduleIn(BaseModel):
+    season: str = Field(default="summer", examples=["summer","after_summer"])
+    day: str = Field(examples=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"])
+    start_time: str = Field(examples=["17:30"])
+    end_time: str = Field(examples=["18:30"])
+    label: Optional[str] = Field(default=None, examples=["GI™ Group A"])
+
+class ScheduleOut(ScheduleIn):
+    id: int
+    created_at: Optional[str] = None
+
+# For course helpers
+class CourseOut(BaseModel):
+    id: int
+    name: str
+    fee: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    time: Optional[str] = None
+    venue: Optional[str] = None
+    created_at: Optional[str] = None
+
 # --- Enrollments ---
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
@@ -207,7 +263,7 @@ def add_course(course: CourseIn):
         conn.commit()
     return {"status": "ok", "message": "Course added successfully", "course": course}
 
-@app.get("/courses", tags=["courses"])
+@app.get("/courses", tags=["courses"], response_model=List[CourseOut])
 def list_courses() -> List[Dict[str, Any]]:
     with get_db() as conn:
         rows = conn.execute("""
@@ -217,7 +273,7 @@ def list_courses() -> List[Dict[str, Any]]:
         """).fetchall()
         return [dict(r) for r in rows]
 
-@app.get("/courses/{course_id}", tags=["courses"])
+@app.get("/courses/{course_id}", tags=["courses"], response_model=CourseOut)
 def get_course(course_id: int) -> Dict[str, Any]:
     with get_db() as conn:
         row = conn.execute("""
@@ -228,6 +284,157 @@ def get_course(course_id: int) -> Dict[str, Any]:
         if not row:
             raise HTTPException(status_code=404, detail="Course not found")
         return dict(row)
+
+# --- Courses: helpers (latest/search/summary) ---
+def course_to_sentence(row: dict) -> str:
+    name = row.get("name") or "The course"
+    fee = row.get("fee")
+    start_date = row.get("start_date")
+    end_date = row.get("end_date")
+    time_ = row.get("time")
+    venue = row.get("venue")
+
+    parts = [f"{name}"]
+    if fee: parts.append(f"costs {fee}")
+    if start_date and end_date:
+        parts.append(f"runs {start_date} to {end_date}")
+    elif start_date:
+        parts.append(f"starts {start_date}")
+    if time_: parts.append(f"{time_}")
+    if venue: parts.append(f"at {venue}")
+    sentence = ", ".join(parts).rstrip(", ")
+    return sentence + "."
+
+@app.get("/courses/latest", response_model=CourseOut, tags=["courses"])
+def get_latest_course():
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            ORDER BY datetime(COALESCE(created_at, '1970-01-01')) DESC, id DESC
+            LIMIT 1
+        """).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="No courses found")
+    return dict(row)
+
+@app.get("/courses/search", response_model=List[CourseOut], tags=["courses"])
+def search_courses(name: str = Query(..., description="Partial or full course name")):
+    like = f"%{name}%"
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            WHERE name LIKE ? COLLATE NOCASE
+            ORDER BY name ASC
+            LIMIT 20
+        """, (like,)).fetchall()
+    return [dict(r) for r in rows]
+
+@app.get("/courses/summary", tags=["courses"])
+def course_summary(name: Optional[str] = Query(None, description="If omitted, summarizes latest course")):
+    with get_db() as conn:
+        if name:
+            like = f"%{name}%"
+            row = conn.execute("""
+                SELECT id, name, fee, start_date, end_date, time, venue, created_at
+                FROM courses
+                WHERE name LIKE ? COLLATE NOCASE
+                ORDER BY id DESC
+                LIMIT 1
+            """, (like,)).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT id, name, fee, start_date, end_date, time, venue, created_at
+                FROM courses
+                ORDER BY datetime(COALESCE(created_at, '1970-01-01')) DESC, id DESC
+                LIMIT 1
+            """).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="No matching course found")
+    sent = course_to_sentence(dict(row))
+    return {"message": sent, "data": dict(row)}
+
+# --- Fees (admin write + public read) ---
+@app.post("/admin/fees", dependencies=[Security(require_admin)], response_model=FeeOut, tags=["admin"])
+def upsert_fee(data: FeeIn):
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO fees(plan, amount, currency, fee_text, note, effective_from)
+            VALUES(?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(plan) DO UPDATE SET
+              amount=excluded.amount,
+              currency=excluded.currency,
+              fee_text=excluded.fee_text,
+              note=excluded.note,
+              effective_from=CURRENT_TIMESTAMP
+        """, (data.plan, data.amount, data.currency, data.fee_text, data.note))
+        row = conn.execute(
+            "SELECT plan, amount, currency, fee_text, note, effective_from FROM fees WHERE plan=?",
+            (data.plan,)
+        ).fetchone()
+    return dict(row)
+
+@app.get("/fees", response_model=List[FeeOut], tags=["public"])
+def list_fees():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT plan, amount, currency, fee_text, note, effective_from
+            FROM fees
+            ORDER BY plan
+        """).fetchall()
+    return [dict(r) for r in rows]
+
+@app.get("/fees/{plan}", response_model=FeeOut, tags=["public"])
+def get_fee(plan: str):
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT plan, amount, currency, fee_text, note, effective_from
+            FROM fees
+            WHERE plan=?
+        """, (plan,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Not found")
+    return dict(row)
+
+# --- Schedule (admin write + public read) ---
+@app.post("/admin/schedule", dependencies=[Security(require_admin)], response_model=ScheduleOut, tags=["admin"])
+def add_schedule(data: ScheduleIn):
+    with get_db() as conn:
+        cur = conn.execute("""
+            INSERT INTO schedules(season, day, start_time, end_time, label)
+            VALUES(?, ?, ?, ?, ?)
+        """, (data.season, data.day, data.start_time, data.end_time, data.label))
+        sid = cur.lastrowid
+        row = conn.execute("""
+            SELECT id, season, day, start_time, end_time, label, created_at
+            FROM schedules WHERE id=?
+        """, (sid,)).fetchone()
+    return dict(row)
+
+@app.get("/schedule", response_model=List[ScheduleOut], tags=["public"])
+def list_schedule(season: Optional[str] = None, day: Optional[str] = None):
+    q = """
+        SELECT id, season, day, start_time, end_time, label, created_at
+        FROM schedules WHERE 1=1
+    """
+    args: List[Any] = []
+    if season:
+        q += " AND season=?"; args.append(season)
+    if day:
+        q += " AND day=?"; args.append(day)
+    q += """
+        ORDER BY
+          CASE day
+            WHEN 'Mon' THEN 1 WHEN 'Tue' THEN 2 WHEN 'Wed' THEN 3
+            WHEN 'Thu' THEN 4 WHEN 'Fri' THEN 5 WHEN 'Sat' THEN 6
+            WHEN 'Sun' THEN 7 ELSE 8 END,
+          start_time
+    """
+    with get_db() as conn:
+        rows = conn.execute(q, args).fetchall()
+    return [dict(r) for r in rows]
 
 # --- OpenAI Chat ---
 @app.post("/chat")
