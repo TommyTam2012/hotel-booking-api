@@ -9,6 +9,10 @@ from pathlib import Path
 import os
 import sqlite3
 from openai import OpenAI
+from fastapi.responses import StreamingResponse
+import csv
+import io
+
 
 # --- Paths ---
 APP_DIR = Path(__file__).parent.resolve()
@@ -304,6 +308,84 @@ def course_to_sentence(row: dict) -> str:
     if venue: parts.append(f"at {venue}")
     sentence = ", ".join(parts).rstrip(", ")
     return sentence + "."
+
+@app.get("/admin/enrollments/export.csv", dependencies=[Security(require_admin)], tags=["admin"])
+def export_enrollments_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, full_name, email, phone, program_code, cohort_code, timezone, notes, source, created_at
+            FROM enrollments
+            ORDER BY id DESC
+        """).fetchall()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=enrollments.csv"})
+    
+@app.get("/fees/export.csv", tags=["public"])
+def export_fees_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT plan, amount, currency, fee_text, note, effective_from
+            FROM fees
+            ORDER BY plan
+        """).fetchall()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=fees.csv"})
+@app.get("/schedule/export.csv", tags=["public"])
+def export_schedule_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, season, day, start_time, end_time, label, created_at
+            FROM schedules
+            ORDER BY season, day, start_time
+        """).fetchall()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=schedule.csv"})
+@app.get("/courses/export.csv", tags=["courses"])
+def export_courses_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            ORDER BY created_at DESC
+        """).fetchall()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=courses.csv"})
 
 @app.get("/courses/latest", response_model=CourseOut, tags=["courses"])
 def get_latest_course():
