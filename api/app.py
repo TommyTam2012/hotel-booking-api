@@ -257,6 +257,10 @@ def admin_health():
     return {"ok": True, "msg": "Admin access confirmed."}
 
 # --- Courses ---
+@app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
+def admin_add_course(course: CourseIn):
+    return add_course(course)  # reuse same logic
+
 @app.post("/courses", dependencies=[Security(require_admin)], tags=["courses"])
 def add_course(course: CourseIn):
     with get_db() as conn:
