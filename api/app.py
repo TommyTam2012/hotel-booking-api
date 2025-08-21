@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -9,10 +9,8 @@ from pathlib import Path
 import os
 import sqlite3
 from openai import OpenAI
-from fastapi.responses import StreamingResponse
 import csv
 import io
-
 
 # --- Paths ---
 APP_DIR = Path(__file__).parent.resolve()
@@ -78,13 +76,13 @@ def init_db():
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
-        # Fees table (plan-level pricing; amount in cents for math, fee text OK too)
+        # Fees table
         c.execute("""
         CREATE TABLE IF NOT EXISTS fees(
-          plan TEXT PRIMARY KEY,            -- e.g., 'GI'
-          amount INTEGER,                   -- cents (nullable if using fee_text)
+          plan TEXT PRIMARY KEY,
+          amount INTEGER,
           currency TEXT DEFAULT 'HKD',
-          fee_text TEXT,                    -- optional pretty string, e.g., 'HK$1,280'
+          fee_text TEXT,
           note TEXT,
           effective_from TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -93,11 +91,11 @@ def init_db():
         c.execute("""
         CREATE TABLE IF NOT EXISTS schedules(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          season TEXT DEFAULT 'summer',     -- 'summer' | 'after_summer' | etc.
-          day TEXT NOT NULL,                -- Mon/Tue/Wed/Thu/Fri/Sat/Sun
-          start_time TEXT NOT NULL,         -- '17:30'
-          end_time TEXT NOT NULL,           -- '18:30'
-          label TEXT,                       -- e.g., 'GI™ Group A'
+          season TEXT DEFAULT 'summer',
+          day TEXT NOT NULL,
+          start_time TEXT NOT NULL,
+          end_time TEXT NOT NULL,
+          label TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """)
@@ -167,7 +165,6 @@ class CourseIn(BaseModel):
     time: Optional[str] = None
     venue: Optional[str] = None
 
-# Fees/Schedule models
 class FeeIn(BaseModel):
     plan: str = Field(examples=["GI"])
     amount: Optional[int] = Field(default=None, example=128000, description="Amount in cents")
@@ -189,7 +186,6 @@ class ScheduleOut(ScheduleIn):
     id: int
     created_at: Optional[str] = None
 
-# For course helpers
 class CourseOut(BaseModel):
     id: int
     name: str
@@ -259,7 +255,7 @@ def admin_health():
 # --- Courses ---
 @app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_add_course(course: CourseIn):
-    return add_course(course)  # reuse same logic
+    return add_course(course)
 
 @app.post("/courses", dependencies=[Security(require_admin)], tags=["courses"])
 def add_course(course: CourseIn):
@@ -281,19 +277,7 @@ def list_courses() -> List[Dict[str, Any]]:
         """).fetchall()
         return [dict(r) for r in rows]
 
-@app.get("/courses/{course_id}", tags=["courses"], response_model=CourseOut)
-def get_course(course_id: int) -> Dict[str, Any]:
-    with get_db() as conn:
-        row = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue, created_at
-            FROM courses
-            WHERE id = ?
-        """, (course_id,)).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Course not found")
-        return dict(row)
-
-# --- Courses: helpers (latest/search/summary) ---
+# --- Helpers FIRST ---
 def course_to_sentence(row: dict) -> str:
     name = row.get("name") or "The course"
     fee = row.get("fee")
@@ -301,7 +285,6 @@ def course_to_sentence(row: dict) -> str:
     end_date = row.get("end_date")
     time_ = row.get("time")
     venue = row.get("venue")
-
     parts = [f"{name}"]
     if fee: parts.append(f"costs {fee}")
     if start_date and end_date:
@@ -312,84 +295,6 @@ def course_to_sentence(row: dict) -> str:
     if venue: parts.append(f"at {venue}")
     sentence = ", ".join(parts).rstrip(", ")
     return sentence + "."
-
-@app.get("/admin/enrollments/export.csv", dependencies=[Security(require_admin)], tags=["admin"])
-def export_enrollments_csv():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, full_name, email, phone, program_code, cohort_code, timezone, notes, source, created_at
-            FROM enrollments
-            ORDER BY id DESC
-        """).fetchall()
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
-    writer.writeheader()
-    for r in rows:
-        writer.writerow(dict(r))
-
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=enrollments.csv"})
-    
-@app.get("/fees/export.csv", tags=["public"])
-def export_fees_csv():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT plan, amount, currency, fee_text, note, effective_from
-            FROM fees
-            ORDER BY plan
-        """).fetchall()
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
-    writer.writeheader()
-    for r in rows:
-        writer.writerow(dict(r))
-
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=fees.csv"})
-@app.get("/schedule/export.csv", tags=["public"])
-def export_schedule_csv():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, season, day, start_time, end_time, label, created_at
-            FROM schedules
-            ORDER BY season, day, start_time
-        """).fetchall()
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
-    writer.writeheader()
-    for r in rows:
-        writer.writerow(dict(r))
-
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=schedule.csv"})
-@app.get("/courses/export.csv", tags=["courses"])
-def export_courses_csv():
-    with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue, created_at
-            FROM courses
-            ORDER BY created_at DESC
-        """).fetchall()
-
-    output = io.StringIO()
-    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
-    writer.writeheader()
-    for r in rows:
-        writer.writerow(dict(r))
-
-    output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=courses.csv"})
 
 @app.get("/courses/latest", response_model=CourseOut, tags=["courses"])
 def get_latest_course():
@@ -436,11 +341,96 @@ def course_summary(name: Optional[str] = Query(None, description="If omitted, su
                 ORDER BY datetime(COALESCE(created_at, '1970-01-01')) DESC, id DESC
                 LIMIT 1
             """).fetchone()
-
     if not row:
         raise HTTPException(status_code=404, detail="No matching course found")
     sent = course_to_sentence(dict(row))
     return {"message": sent, "data": dict(row)}
+
+# --- ID route LAST ---
+@app.get("/courses/{course_id}", tags=["courses"], response_model=CourseOut)
+def get_course(course_id: int) -> Dict[str, Any]:
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            WHERE id = ?
+        """, (course_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Course not found")
+        return dict(row)
+
+# --- CSV Exports ---
+@app.get("/admin/enrollments/export.csv", dependencies=[Security(require_admin)], tags=["admin"])
+def export_enrollments_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, full_name, email, phone, program_code, cohort_code, timezone, notes, source, created_at
+            FROM enrollments
+            ORDER BY id DESC
+        """).fetchall()
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=enrollments.csv"})
+
+@app.get("/fees/export.csv", tags=["public"])
+def export_fees_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT plan, amount, currency, fee_text, note, effective_from
+            FROM fees
+            ORDER BY plan
+        """).fetchall()
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=fees.csv"})
+
+@app.get("/schedule/export.csv", tags=["public"])
+def export_schedule_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, season, day, start_time, end_time, label, created_at
+            FROM schedules
+            ORDER BY season, day, start_time
+        """).fetchall()
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=schedule.csv"})
+
+@app.get("/courses/export.csv", tags=["courses"])
+def export_courses_csv():
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            ORDER BY created_at DESC
+        """).fetchall()
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys() if rows else [])
+    writer.writeheader()
+    for r in rows:
+        writer.writerow(dict(r))
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=courses.csv"})
 
 # --- Fees (admin write + public read) ---
 @app.post("/admin/fees", dependencies=[Security(require_admin)], response_model=FeeOut, tags=["admin"])
@@ -484,7 +474,7 @@ def get_fee(plan: str):
         raise HTTPException(404, "Not found")
     return dict(row)
 
-# --- Schedule (admin write + public read) ---
+# --- Schedule ---
 @app.post("/admin/schedule", dependencies=[Security(require_admin)], response_model=ScheduleOut, tags=["admin"])
 def add_schedule(data: ScheduleIn):
     with get_db() as conn:
@@ -528,7 +518,6 @@ def chat(in_: ChatIn):
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="Missing OPENAI_API_KEY")
-
     client = OpenAI(api_key=api_key)
     try:
         resp = client.chat.completions.create(
