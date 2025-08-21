@@ -261,12 +261,17 @@ def admin_add_course(course: CourseIn):
 @app.post("/courses", dependencies=[Security(require_admin)], tags=["courses"])
 def add_course(course: CourseIn):
     with get_db() as conn:
-        conn.execute("""
+        cur = conn.execute("""
             INSERT INTO courses (name, fee, start_date, end_date, time, venue)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (course.name, course.fee, course.start_date, course.end_date, course.time, course.venue))
+        course_id = cur.lastrowid
+        row = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses WHERE id=?
+        """, (course_id,)).fetchone()
         conn.commit()
-    return {"status": "ok", "message": "Course added successfully", "course": course}
+    return dict(row)
 
 @app.get("/courses", tags=["courses"], response_model=List[CourseOut])
 def list_courses() -> List[Dict[str, Any]]:
