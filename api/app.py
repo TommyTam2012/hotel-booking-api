@@ -141,6 +141,18 @@ def get_faq(intent: str):
         if not row:
             raise HTTPException(status_code=404, detail="FAQ not found")
         return {"intent": intent, "question": row["question"], "answer": row["answer"]}
+
+# --- New ---
+@app.get("/faqs", tags=["public"])
+def list_faqs(limit: int = Query(10, ge=1, le=100)):
+    """Return a list of FAQs for avatar consumption"""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT intent, question, answer FROM faq ORDER BY intent LIMIT ?",
+            (limit,)
+        ).fetchall()
+    return [dict(r) for r in rows]
+
 # --- Models ---
 class EnrollmentIn(BaseModel):
     full_name: Optional[str] = None
@@ -283,7 +295,6 @@ def list_courses() -> List[Dict[str, Any]]:
         """).fetchall()
         return [dict(r) for r in rows]
 
-
 # --- Courses: helpers & exports (MUST precede /{course_id}) ---
 def course_to_sentence(row: dict) -> str:
     name = row.get("name") or "The course"
@@ -375,6 +386,25 @@ def course_summary(name: Optional[str] = Query(None, description="If omitted, su
     sent = course_to_sentence(dict(row))
     return {"message": sent, "data": dict(row)}
 
+# --- New ---
+@app.get("/courses/summary/all", tags=["courses"])
+def all_course_summaries(limit: int = Query(10, ge=1, le=50)):
+    """Return short summaries of multiple courses"""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, name, fee, start_date, end_date, time, venue, created_at
+            FROM courses
+            ORDER BY datetime(COALESCE(created_at, '1970-01-01')) DESC, id DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail="No courses found")
+    return {
+        "courses": [
+            {"id": r["id"], "summary": course_to_sentence(dict(r)), "data": dict(r)}
+            for r in rows
+        ]
+    }
 
 # --- Single course by ID (keep LAST) ---
 @app.get("/courses/{course_id}", tags=["courses"], response_model=CourseOut)
@@ -388,7 +418,6 @@ def get_course(course_id: int) -> Dict[str, Any]:
         if not row:
             raise HTTPException(status_code=404, detail="Course not found")
         return dict(row)
-
 
 # --- CSV Exports: enrollments/fees/schedule ---
 @app.get("/admin/enrollments/export.csv", dependencies=[Security(require_admin)], tags=["admin"])
@@ -451,7 +480,6 @@ def export_schedule_csv():
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=schedule.csv"})
 
-
 # --- Fees (admin write + public read) ---
 @app.post("/admin/fees", dependencies=[Security(require_admin)], response_model=FeeOut, tags=["admin"])
 def upsert_fee(data: FeeIn):
@@ -494,7 +522,6 @@ def get_fee(plan: str):
         raise HTTPException(404, "Not found")
     return dict(row)
 
-
 # --- Schedule (admin write + public read) ---
 @app.post("/admin/schedule", dependencies=[Security(require_admin)], response_model=ScheduleOut, tags=["admin"])
 def add_schedule(data: ScheduleIn):
@@ -536,7 +563,6 @@ def list_schedule(season: Optional[str] = None, day: Optional[str] = None):
     with get_db() as conn:
         rows = conn.execute(q, args).fetchall()
     return [dict(r) for r in rows]
-
 
 # --- OpenAI Chat ---
 @app.post("/chat")
