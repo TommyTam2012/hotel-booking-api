@@ -278,65 +278,29 @@ def mint_heygen_token():
     if not api_key:
         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
 
-    # Candidate endpoints (vendor may vary by account setup)
-    endpoints = [
-        "https://api.heygen.com/v1/streaming.create_session",
-        "https://api.heygen.com/v1/streaming/session",
-        "https://api.heygen.com/v1/streaming/token",
-    ]
+    url = "https://api.heygen.com/v1/streaming.create_token"
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    payload = {"avatar_id": AVATAR_ID}
 
-    last_err = None
-    for url in endpoints:
-        try:
-            # Try Bearer first; some tenants use X-Api-Key
-            headers_list = [
-                {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-                {"X-Api-Key": api_key, "Accept": "application/json"},
-            ]
-            payload = {"avatar_id": AVATAR_ID}
-            for headers in headers_list:
-                with httpx.Client(timeout=10.0) as client:
-                    r = client.post(url, json=payload, headers=headers)
-                # Accept JSON or text (debug)
-                content_type = r.headers.get("content-type", "")
-                data = r.json() if "application/json" in content_type else {"raw": r.text}
+    with httpx.Client(timeout=10.0) as client:
+        r = client.post(url, json=payload, headers=headers)
 
-                if r.status_code < 300:
-                    # Normalize common field names
-                    token = (
-                        data.get("session_token")
-                        or data.get("token")
-                        or data.get("access_token")
-                    )
-                    ttl = int(data.get("expires_in", 300))
-                    if token:
-                        return {
-                            "ok": True,
-                            "session_token": token,
-                            "avatar_id": AVATAR_ID,
-                            "issued_at": int(time.time()),
-                            "expires_in": ttl,
-                        }
-                    last_err = f"Success without token field at {url}"
-                else:
-                    # Keep last error detail for reporting
-                    msg = data if isinstance(data, dict) else {"error": data}
-                    last_err = f"{url} -> {r.status_code} {r.reason_phrase} | {msg}"
-        except Exception as e:
-            last_err = f"{url} exception: {e}"
+    data = r.json() if "application/json" in (r.headers.get("content-type") or "") else {}
+    if r.status_code >= 300:
+        raise HTTPException(status_code=502,
+            detail=f"HeyGen token fetch failed: {r.status_code} {r.reason_phrase} | {data or r.text}")
 
-    raise HTTPException(status_code=502, detail=f"HeyGen token fetch failed: {last_err}")
+    token = (data.get("data") or {}).get("token") or data.get("token")
+    if not token:
+        raise HTTPException(status_code=502, detail=f"HeyGen token missing in response: {data}")
 
-    if not os.getenv("HEYGEN_API_KEY"):
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
     return {
         "ok": True,
-        "token": "stub-dev-token",
+        "session_token": token,
         "avatar_id": AVATAR_ID,
         "issued_at": int(time.time()),
-        "expires_in": 300
+        "expires_in": int(data.get("expires_in", 300)),
     }
-
 # --- Courses ---
 @app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_add_course(course: CourseIn):
