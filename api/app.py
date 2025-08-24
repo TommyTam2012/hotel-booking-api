@@ -12,6 +12,7 @@ from openai import OpenAI
 import csv
 import io
 import time  # <-- added
+import httpx
 
 # --- Paths ---
 APP_DIR = Path(__file__).parent.resolve()
