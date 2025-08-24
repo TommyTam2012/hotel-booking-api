@@ -265,16 +265,68 @@ def recent_enrollments(
 def admin_health():
     return {"ok": True, "msg": "Admin access confirmed."}
 
-# --- HeyGen: mint short-lived token (stub for now) ---
+# --- HeyGen: mint short-lived token (real call) ---
 AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
 
 @app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
 def mint_heygen_token():
     """
-    Baby-step endpoint. Verifies HEYGEN_API_KEY exists server-side and
-    returns a short-lived stub token for frontend wiring tests.
-    Replace with real HeyGen token mint in the next step.
+    Exchange our HEYGEN_API_KEY for a short-lived session token bound to AVATAR_ID.
+    Returns: { ok, session_token, avatar_id, issued_at, expires_in }
     """
+    api_key = os.getenv("HEYGEN_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
+
+    # Candidate endpoints (vendor may vary by account setup)
+    endpoints = [
+        "https://api.heygen.com/v1/streaming.create_session",
+        "https://api.heygen.com/v1/streaming/session",
+        "https://api.heygen.com/v1/streaming/token",
+    ]
+
+    last_err = None
+    for url in endpoints:
+        try:
+            # Try Bearer first; some tenants use X-Api-Key
+            headers_list = [
+                {"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+                {"X-Api-Key": api_key, "Accept": "application/json"},
+            ]
+            payload = {"avatar_id": AVATAR_ID}
+            for headers in headers_list:
+                with httpx.Client(timeout=10.0) as client:
+                    r = client.post(url, json=payload, headers=headers)
+                # Accept JSON or text (debug)
+                content_type = r.headers.get("content-type", "")
+                data = r.json() if "application/json" in content_type else {"raw": r.text}
+
+                if r.status_code < 300:
+                    # Normalize common field names
+                    token = (
+                        data.get("session_token")
+                        or data.get("token")
+                        or data.get("access_token")
+                    )
+                    ttl = int(data.get("expires_in", 300))
+                    if token:
+                        return {
+                            "ok": True,
+                            "session_token": token,
+                            "avatar_id": AVATAR_ID,
+                            "issued_at": int(time.time()),
+                            "expires_in": ttl,
+                        }
+                    last_err = f"Success without token field at {url}"
+                else:
+                    # Keep last error detail for reporting
+                    msg = data if isinstance(data, dict) else {"error": data}
+                    last_err = f"{url} -> {r.status_code} {r.reason_phrase} | {msg}"
+        except Exception as e:
+            last_err = f"{url} exception: {e}"
+
+    raise HTTPException(status_code=502, detail=f"HeyGen token fetch failed: {last_err}")
+
     if not os.getenv("HEYGEN_API_KEY"):
         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
     return {
