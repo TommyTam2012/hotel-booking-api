@@ -265,6 +265,8 @@ def admin_health():
     return {"ok": True, "msg": "Admin access confirmed."}
 
 # --- HeyGen: mint short-lived token (stub for now) ---
+AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
+
 @app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
 def mint_heygen_token():
     """
@@ -277,6 +279,7 @@ def mint_heygen_token():
     return {
         "ok": True,
         "token": "stub-dev-token",
+        "avatar_id": AVATAR_ID,
         "issued_at": int(time.time()),
         "expires_in": 300
     }
