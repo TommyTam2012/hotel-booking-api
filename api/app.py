@@ -11,6 +11,7 @@ import sqlite3
 from openai import OpenAI
 import csv
 import io
+import time  # <-- added
 
 # --- Paths ---
 APP_DIR = Path(__file__).parent.resolve()
@@ -207,7 +208,6 @@ class CourseOut(BaseModel):
     venue: Optional[str] = None
     created_at: Optional[str] = None
 
-
 # --- Enrollments ---
 @app.post("/enroll")
 def enroll(data: EnrollmentIn):
@@ -264,6 +264,22 @@ def recent_enrollments(
 def admin_health():
     return {"ok": True, "msg": "Admin access confirmed."}
 
+# --- HeyGen: mint short-lived token (stub for now) ---
+@app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
+def mint_heygen_token():
+    """
+    Baby-step endpoint. Verifies HEYGEN_API_KEY exists server-side and
+    returns a short-lived stub token for frontend wiring tests.
+    Replace with real HeyGen token mint in the next step.
+    """
+    if not os.getenv("HEYGEN_API_KEY"):
+        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
+    return {
+        "ok": True,
+        "token": "stub-dev-token",
+        "issued_at": int(time.time()),
+        "expires_in": 300
+    }
 
 # --- Courses ---
 @app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
