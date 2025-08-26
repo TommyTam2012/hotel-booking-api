@@ -271,16 +271,19 @@ AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
 @app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
 def mint_heygen_token():
     """
-    Exchange our HEYGEN_API_KEY for a short-lived session token bound to AVATAR_ID.
+    Ask Heygen for a streaming session (server-side).
     Returns: { ok, session_token, avatar_id, issued_at, expires_in }
     """
     api_key = os.getenv("HEYGEN_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
 
-    url = "https://api.heygen.com/v1/streaming.create_token"
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    payload = {"avatar_id": AVATAR_ID}
+    url = "https://api.heygen.com/v1/streaming.new"
+    headers = {"x-api-key": api_key, "Accept": "application/json"}
+    payload = {
+        "quality": "high",
+        "avatar_id": AVATAR_ID,
+    }
 
     with httpx.Client(timeout=10.0) as client:
         r = client.post(url, json=payload, headers=headers)
@@ -288,11 +291,11 @@ def mint_heygen_token():
     data = r.json() if "application/json" in (r.headers.get("content-type") or "") else {}
     if r.status_code >= 300:
         raise HTTPException(status_code=502,
-            detail=f"HeyGen token fetch failed: {r.status_code} {r.reason_phrase} | {data or r.text}")
+            detail=f"HeyGen streaming session failed: {r.status_code} {r.reason_phrase} | {data or r.text}")
 
-    token = (data.get("data") or {}).get("token") or data.get("token")
+    token = (data.get("data") or {}).get("session_token")
     if not token:
-        raise HTTPException(status_code=502, detail=f"HeyGen token missing in response: {data}")
+        raise HTTPException(status_code=502, detail=f"Missing session_token in response: {data}")
 
     return {
         "ok": True,
