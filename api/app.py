@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Security, Request
+from fastapi import FastAPI, HTTPException, Query, Security, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, StreamingResponse, Response
