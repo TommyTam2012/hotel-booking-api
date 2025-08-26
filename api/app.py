@@ -82,7 +82,7 @@ init_db()
 
 # --- Admin key guard ---
 ADMIN_KEY = os.getenv("ADMIN_KEY")
-API_KEY_NAME = "X-Admin-Key"
+API_KEY_NAME = "Admin-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
