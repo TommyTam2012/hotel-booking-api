@@ -82,20 +82,23 @@ init_db()
 
 # --- Admin key guard ---
 ADMIN_KEY = os.getenv("ADMIN_KEY")
-API_KEY_NAME = "Admin-Key"
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
     if not ADMIN_KEY:
         raise HTTPException(status_code=500, detail="ADMIN_KEY not configured on server")
+
+    if not x_admin_key:
+        raise HTTPException(status_code=403, detail="Forbidden (no X-Admin-Key header received)")
+
     if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=403, detail=f"Forbidden (got {x_admin_key}, expected ADMIN_KEY)")
+
     return True
 
 # --- Basic routes ---
 @app.get("/")
 def root():
-    # Redirect to a simple static page if present
     return RedirectResponse(url="/static/enroll.html")
 
 @app.get("/health")
@@ -151,10 +154,6 @@ AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
 # --- HeyGen: mint short-lived token (server-side) ---
 @app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
 def mint_heygen_token():
-    """
-    Create a short-lived Heygen token for AVATAR_ID.
-    Returns: { ok, session_token, avatar_id, issued_at, expires_in }
-    """
     api_key = os.getenv("HEYGEN_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
@@ -193,10 +192,6 @@ def mint_heygen_token():
     dependencies=[Security(require_admin)],
 )
 async def heygen_proxy(subpath: str, request: Request):
-    """
-    CORS-safe proxy to Heygen API: /heygen/proxy/<anything after /v1/>
-    Example: /heygen/proxy/streaming.new
-    """
     api_key = os.getenv("HEYGEN_API_KEY")
     if not api_key:
         raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
@@ -210,7 +205,6 @@ async def heygen_proxy(subpath: str, request: Request):
         if k.lower() not in {"host", "content-length", "connection"}
     }
 
-    # If caller didn't send Authorization (SDK may send Bearer <token>), inject API key.
     if "authorization" not in {k.lower() for k in out_headers.keys()}:
         out_headers["Authorization"] = f"Bearer {api_key}"
     out_headers.setdefault("Accept", "application/json")
@@ -306,7 +300,7 @@ def export_courses_csv():
 # --- Enrollment ---
 class EnrollmentIn(BaseModel):
     full_name: Optional[str] = None
-    name: Optional[str] = None  # alias for full_name; will normalize
+    name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     program_code: Optional[str] = None
@@ -317,7 +311,6 @@ class EnrollmentIn(BaseModel):
 
 @app.post("/enroll", tags=["enroll"])
 def enroll(data: EnrollmentIn):
-    # normalize name
     full_name_val = (data.full_name or data.name or "").strip()
     if not full_name_val:
         raise HTTPException(status_code=422, detail="full_name or name is required")
