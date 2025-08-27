@@ -189,8 +189,7 @@ def mint_heygen_token():
 @app.api_route(
     "/heygen/proxy/{subpath:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    tags=["admin"],
-    dependencies=[Security(require_admin)],
+    tags=["public"],
 )
 async def heygen_proxy(subpath: str, request: Request):
     api_key = os.getenv("HEYGEN_API_KEY")
