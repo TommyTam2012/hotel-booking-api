@@ -153,7 +153,7 @@ def admin_check():
 AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
 
 # --- HeyGen: mint short-lived token (server-side) ---
-@app.post("/heygen/token", dependencies=[Security(require_admin)], tags=["admin"])
+@app.post("/heygen/token", tags=["public"])
 def mint_heygen_token():
     api_key = os.getenv("HEYGEN_API_KEY")
     if not api_key:
