@@ -81,7 +81,8 @@ def init_db():
 init_db()
 
 # --- Admin key guard ---
-ADMIN_KEY = os.getenv("ADMIN_KEY")
+# Accept either ADMIN_KEY or VITE_BCM_ADMIN_KEY (Render env uses the latter in your setup)
+ADMIN_KEY = os.getenv("ADMIN_KEY") or os.getenv("VITE_BCM_ADMIN_KEY")
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
@@ -348,7 +349,7 @@ def recent_enrollments(
 
     with get_db() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
-        return [dict(r) for r in rows]
+        return [dict(r) for r] in rows]
 
 # --- OpenAI passthrough example (optional) ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
