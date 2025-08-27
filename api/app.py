@@ -349,7 +349,7 @@ def recent_enrollments(
 
     with get_db() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
-        return [dict(r) for r] in rows]
+        return [dict(r) for r in rows]
 
 # --- OpenAI passthrough example (optional) ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
