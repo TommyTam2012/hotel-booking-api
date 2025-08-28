@@ -167,12 +167,11 @@ async def heygen_token():
         "Content-Type": "application/json",
     }
     payload = {
+        "avatar_id": AVATAR_ID,   # ✅ must use avatar_id
         "quality": "high",
-        "avatar_id": AVATAR_ID,   # <-- use avatar_id per docs
-        "version": "v2",          # <-- request LiveKit flow
-        # optional:
-        # "voice": {"voice_id": "...", "rate": 1.0},
-        # "disable_idle_timeout": True,
+        "version": "v2",          # ✅ force LiveKit response
+        # "voice": {"voice_id": "...", "rate": 1.0},   # optional
+        # "disable_idle_timeout": True
     }
 
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -186,7 +185,6 @@ async def heygen_token():
     except Exception:
         raise HTTPException(502, f"heygen ok but non-JSON body: {r.text[:500]}")
 
-    # Expect data.data.session_id, data.data.url, data.data.access_token in LiveKit flow.
     return data
 
 @app.api_route("/heygen/proxy/{subpath:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], tags=["public"])
