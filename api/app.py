@@ -158,7 +158,6 @@ async def heygen_token():
     if not HEYGEN_API_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY missing")
 
-    # 1) Use your Alessandra id; allow override via env HEYGEN_AVATAR_ID
     AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "0d3f35185d7c4360b9f03312e0264d59")
 
     url = f"{HEYGEN_BASE}/streaming.new"
@@ -167,37 +166,24 @@ async def heygen_token():
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-
-    # Try both common shapes: avatarName and avatar_id
     payload = {
         "avatarName": AVATAR_ID,
         "quality": "high",
-        # "language": "en",
-        # "voice": {"rate": 1.0}
     }
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         r = await client.post(url, headers=headers, json=payload)
 
-    text = r.text
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"heygen error: {text}")
+        raise HTTPException(r.status_code, f"heygen error: {r.text}")
 
     try:
         data = r.json()
     except Exception:
-        raise HTTPException(502, f"heygen ok but non-JSON body: {text[:500]}")
+        raise HTTPException(502, f"heygen ok but non-JSON body: {r.text[:500]}")
 
-    token = (
-        data.get("data", {}).get("session_token")
-        or data.get("session_token")
-        or data.get("token")
-    )
-
-    if not token:
-        raise HTTPException(502, f"heygen ok but no token; body: {json.dumps(data)[:800]}")
-
-    return {"session_token": token}
+    # ✅ Return full HeyGen body (session_id + sdp or session_token if provided)
+    return data
 
 @app.api_route("/heygen/proxy/{subpath:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], tags=["public"])
 async def heygen_proxy(subpath: str, request: Request):
