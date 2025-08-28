@@ -158,7 +158,7 @@ async def heygen_token():
     if not HEYGEN_API_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY missing")
 
-    AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "0d3f35185d7c4360b9f03312e0264d59")
+    AVATAR_ID = os.getenv("HEYGEN_AVATAR_ID", "97ce1cfd4bf1455eae288ba472686051")
 
     url = f"{HEYGEN_BASE}/streaming.new"
     headers = {
@@ -167,11 +167,9 @@ async def heygen_token():
         "Content-Type": "application/json",
     }
     payload = {
-        "avatar_id": AVATAR_ID,   # ✅ must use avatar_id
+        "avatar_id": AVATAR_ID,   # ✅ correct field
         "quality": "high",
-        "version": "v2",          # ✅ force LiveKit response
-        # "voice": {"voice_id": "...", "rate": 1.0},   # optional
-        # "disable_idle_timeout": True
+        "version": "v2",          # ✅ request LiveKit creds (session_id, url, access_token)
     }
 
     async with httpx.AsyncClient(timeout=20.0) as client:
@@ -181,7 +179,7 @@ async def heygen_token():
         raise HTTPException(r.status_code, f"heygen error: {r.text}")
 
     try:
-        data = r.json()
+        return r.json()
     except Exception:
         raise HTTPException(502, f"heygen ok but non-JSON body: {r.text[:500]}")
 
