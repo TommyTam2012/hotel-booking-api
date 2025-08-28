@@ -25,14 +25,18 @@ app = FastAPI(
     description="Backend for BCM demo: courses, enrollments, fees, schedules, and HeyGen token/proxy.",
 )
 
-# Static files (for simple frontends like enroll.html)
+# Static files
 app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="static")
 
-# CORS (frontend apps like Vite will hit these endpoints from another origin)
+# --- CORS ---
+origins = [
+    "https://bcmavatar.vercel.app",  # your Vercel frontend
+    "http://localhost:3000",         # local dev
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -147,7 +151,7 @@ def admin_check():
     return {"ok": True, "message": "Admin access confirmed."}
 
 # =========================================================
-# === HeyGen CONFIG + TOKEN + PROXY (patched) ============
+# === HeyGen CONFIG + TOKEN + PROXY =======================
 # =========================================================
 
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY") or os.getenv("ADMIN_KEY")
