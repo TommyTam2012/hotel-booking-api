@@ -153,14 +153,18 @@ def admin_check():
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY") or os.getenv("ADMIN_KEY")
 HEYGEN_BASE = "https://api.heygen.com/v1"
 
-@app.post("/heygen/token", tags=["public"])
+@app.post("/heygen/token")
 async def heygen_token():
     if not HEYGEN_API_KEY:
         raise HTTPException(500, "HEYGEN_API_KEY missing")
     url = f"{HEYGEN_BASE}/streaming.new"
     headers = {"X-Api-Key": HEYGEN_API_KEY, "Accept": "application/json"}
+    payload = {
+        "avatarName": "0d3f35185d7c4360b9f03312e0264d59",  # Alessandra Professional Look
+        "quality": "high"
+    }
     async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.post(url, headers=headers, json={})
+        r = await client.post(url, headers=headers, json=payload)
     if r.status_code != 200:
         raise HTTPException(r.status_code, f"heygen error: {r.text}")
     data = r.json()
