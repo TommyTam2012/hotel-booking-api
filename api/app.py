@@ -11,8 +11,9 @@ import sqlite3
 from openai import OpenAI
 import csv
 import io
-import time  # needed for token timestamps
+import time
 import httpx
+import json
 
 # --- App & basic setup ---
 APP_DIR = Path(__file__).parent.resolve()
@@ -81,20 +82,16 @@ def init_db():
 init_db()
 
 # --- Admin key guard ---
-# Accept either ADMIN_KEY or VITE_BCM_ADMIN_KEY (Render env uses the latter in your setup)
 ADMIN_KEY = os.getenv("ADMIN_KEY") or os.getenv("VITE_BCM_ADMIN_KEY")
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
     if not ADMIN_KEY:
         raise HTTPException(status_code=500, detail="ADMIN_KEY not configured on server")
-
     if not x_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden (no X-Admin-Key header received)")
-
     if x_admin_key != ADMIN_KEY:
         raise HTTPException(status_code=403, detail=f"Forbidden (got {x_admin_key}, expected ADMIN_KEY)")
-
     return True
 
 # --- Basic routes ---
@@ -149,80 +146,56 @@ def schedule(season: Optional[str] = None):
 def admin_check():
     return {"ok": True, "message": "Admin access confirmed."}
 
-# --- HeyGen config ---
-AVATAR_ID = "c5e81098eb3e46189740b6156b3ac85a"
+# =========================================================
+# === HeyGen CONFIG + TOKEN + PROXY (Option A applied) ====
+# =========================================================
 
-# --- HeyGen: mint short-lived token (server-side) ---
+HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY") or os.getenv("ADMIN_KEY")
+HEYGEN_BASE = "https://api.heygen.com/v1"
+
 @app.post("/heygen/token", tags=["public"])
-def mint_heygen_token():
-    api_key = os.getenv("HEYGEN_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
-
-    url = "https://api.heygen.com/v1/streaming.create_token"
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    payload = {"avatar_id": AVATAR_ID}
-
-    with httpx.Client(timeout=10.0) as client:
-        r = client.post(url, json=payload, headers=headers)
-
-    data = r.json() if "application/json" in (r.headers.get("content-type") or "") else {}
-    if r.status_code >= 300:
-        raise HTTPException(
-            status_code=502,
-            detail=f"HeyGen token fetch failed: {r.status_code} {r.reason_phrase} | {data or r.text}"
-        )
-
-    token = (data.get("data") or {}).get("token") or data.get("token")
-    if not token:
-        raise HTTPException(status_code=502, detail=f"HeyGen token missing in response: {data}")
-
-    return {
-        "ok": True,
-        "session_token": token,
-        "avatar_id": AVATAR_ID,
-        "issued_at": int(time.time()),
-        "expires_in": int(data.get("expires_in", 300)),
-    }
-
-# === HeyGen CORS-safe proxy (server-side) ===
-@app.api_route(
-    "/heygen/proxy/{subpath:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    tags=["public"],
-)
-async def heygen_proxy(subpath: str, request: Request):
-    api_key = os.getenv("HEYGEN_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="HEYGEN_API_KEY missing")
-
-    target_url = f"https://api.heygen.com/v1/{subpath}"
-    method = request.method.upper()
-    body = await request.body()
-
-    out_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in {"host", "content-length", "connection"}
-    }
-
-    if "authorization" not in {k.lower() for k in out_headers.keys()}:
-        out_headers["Authorization"] = f"Bearer {api_key}"
-    out_headers.setdefault("Accept", "application/json")
-
+async def heygen_token():
+    if not HEYGEN_API_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY missing")
+    url = f"{HEYGEN_BASE}/streaming.new"
+    headers = {"X-Api-Key": HEYGEN_API_KEY, "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        upstream = await client.request(method, target_url, content=body, headers=out_headers)
+        r = await client.post(url, headers=headers, json={})
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"heygen error: {r.text}")
+    data = r.json()
+    token = data.get("data", {}).get("session_token") or data.get("session_token") or data.get("token")
+    if not token:
+        raise HTTPException(502, "No session token in HeyGen response")
+    return {"session_token": token}
 
-    headers = dict(upstream.headers)
-    for h in [
-        "content-encoding", "transfer-encoding", "connection", "keep-alive",
-        "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade"
-    ]:
-        headers.pop(h, None)
-    headers["Access-Control-Allow-Origin"] = "*"
-    headers["Access-Control-Allow-Headers"] = "*"
-    headers["Access-Control-Allow-Methods"] = "*"
+@app.api_route("/heygen/proxy/{subpath:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], tags=["public"])
+async def heygen_proxy(subpath: str, request: Request):
+    if not HEYGEN_API_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY missing")
+    target_url = f"{HEYGEN_BASE}/{subpath}"
+    if request.url.query:
+        target_url += f"?{request.url.query}"
+    body_bytes = await request.body()
+    json_payload = None
+    if body_bytes:
+        try:
+            json_payload = json.loads(body_bytes.decode("utf-8"))
+        except Exception:
+            json_payload = None
+    headers = {"X-Api-Key": HEYGEN_API_KEY, "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.request(
+            request.method,
+            target_url,
+            headers=headers,
+            json=json_payload if json_payload is not None else None,
+            content=None if json_payload is not None else (body_bytes or None),
+        )
+    return Response(content=r.content, status_code=r.status_code,
+                    media_type=r.headers.get("content-type", "application/json"))
 
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=headers)
+# =========================================================
 
 # --- Courses model ---
 class CourseIn(BaseModel):
