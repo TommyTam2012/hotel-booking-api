@@ -166,11 +166,11 @@ async def heygen_token():
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
-    payload = {
-        "avatar_id": AVATAR_ID,   # must be interactive avatar
-        "quality": "high",
-        "version": "v2",          # LiveKit flow
-    }
+   payload = {
+    "avatar_id": AVATAR_ID,   # your interactive avatar ID from .env
+    "quality": "high",
+    "version": "v2"           # LiveKit flow
+}
 
     async with httpx.AsyncClient(timeout=20.0) as client:
         r = await client.post(url, headers=headers, json=payload)
