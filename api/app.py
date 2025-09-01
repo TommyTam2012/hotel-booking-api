@@ -107,6 +107,16 @@ def root():
 def health():
     return {"ok": True}
 
+# --- BCM-only assistant intro (fixed message) ---
+@app.get("/assistant/intro")
+def assistant_intro():
+    return {
+        "intro": (
+            "Hello, I’m the BCM assistant. I can answer about GI fees, summer schedule, "
+            "and our latest courses. Ask me anything related to BCM."
+        )
+    }
+
 # --- FAQ ---
 @app.get("/faq")
 def get_faq() -> List[Dict[str, Any]]:
@@ -254,6 +264,27 @@ def list_courses() -> List[Dict[str, Any]]:
             FROM courses ORDER BY id DESC
         """).fetchall()
         return [dict(r) for r in rows]
+
+# --- Helper: Course summary (place ABOVE /courses/{course_id}) ---
+@app.get("/courses/summary")
+def courses_summary():
+    with get_db() as conn:
+        row = conn.execute("""
+            SELECT name, fee, start_date, end_date, time, venue
+            FROM courses
+            ORDER BY id DESC
+            LIMIT 1
+        """).fetchone()
+    if not row:
+        return {"summary": "We currently have no courses listed."}
+    parts = [f"Latest course: {row['name']}, fee {row['fee']}."]
+    if row["start_date"] and row["end_date"]:
+        parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
+    if row["time"]:
+        parts.append(f"Time: {row['time']}.")
+    if row["venue"]:
+        parts.append(f"Venue: {row['venue']}.")
+    return {"summary": " ".join(parts)}
 
 @app.get("/courses/{course_id}")
 def get_course(course_id: int) -> Dict[str, Any]:
