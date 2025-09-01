@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Query, Security, Request, Depends
+from fastapi import FastAPI, HTTPException, Query, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, StreamingResponse, Response
@@ -8,12 +8,17 @@ from typing import Optional, List, Dict, Any
 from pathlib import Path
 import os
 import sqlite3
-from openai import OpenAI
 import csv
 import io
 import time
 import httpx
 import json
+
+# Optional OpenAI import (safe if package not installed)
+try:
+    from openai import OpenAI  # noqa: F401
+except Exception:
+    OpenAI = None  # type: ignore
 
 # --- App & basic setup ---
 APP_DIR = Path(__file__).parent.resolve()
@@ -21,7 +26,7 @@ DB_PATH = str(APP_DIR / "bcm_demo.db")
 
 app = FastAPI(
     title="BCM Demo API",
-    version="1.0.0",
+    version="1.1.0",
     description="Backend for BCM demo: courses, enrollments, fees, schedules, and HeyGen token/proxy.",
 )
 
@@ -95,7 +100,7 @@ def require_admin(x_admin_key: str = Security(api_key_header)):
     if not x_admin_key:
         raise HTTPException(status_code=403, detail="Forbidden (no X-Admin-Key header received)")
     if x_admin_key != ADMIN_KEY:
-        raise HTTPException(status_code=403, detail=f"Forbidden (got {x_admin_key}, expected ADMIN_KEY)")
+        raise HTTPException(status_code=403, detail="Forbidden (bad X-Admin-Key)")
     return True
 
 # --- Basic routes ---
@@ -108,7 +113,7 @@ def health():
     return {"ok": True}
 
 # --- BCM assistant: fixed intro + hard rules (expanded) ---
-ENROLL_LINK = "/static/enroll.html"  # change if your path differs
+ENROLL_LINK = "/static/enroll.html"  # adjust if your path differs
 
 BCM_RULES = (
     "You are the BCM assistant. Follow these rules strictly: "
@@ -129,7 +134,7 @@ BCM_RULES = (
 
 @app.get("/assistant/intro")
 def assistant_intro():
-    # Fixed, BCM-only intro (bypasses any external KB)
+    # BCM-only intro (bypasses any external KB)
     return {
         "intro": (
             "Hello, I’m the BCM assistant. I can answer about GI fees, summer schedule, "
@@ -139,7 +144,6 @@ def assistant_intro():
 
 @app.get("/assistant/prompt")
 def assistant_prompt():
-    # Frontend can fetch this if it wants to display the guardrails or send them to a model
     return {"prompt": BCM_RULES, "enroll_link": ENROLL_LINK}
 
 # --- FAQ ---
@@ -162,22 +166,27 @@ def add_faq(item: FAQIn):
         row = conn.execute("SELECT id, q, a FROM faq WHERE id = ?", (fid,)).fetchone()
         return dict(row)
 
-# --- Fees ---
+# --- Fees (BCM labels, case-insensitive) ---
 @app.get("/fees/{program_code}")
 def get_fees(program_code: str):
+    code = (program_code or "").upper()
     mapping = {
-        "GI": {"program": "General IELTS", "fee": 8800, "currency": "HKD"},
-        "HKDSE": {"program": "HKDSE English", "fee": 7600, "currency": "HKD"},
+        "GI":    {"program": "BCM General English (GI)", "fee": 8800, "currency": "HKD"},
+        "HKDSE": {"program": "BCM HKDSE English",        "fee": 7600, "currency": "HKD"},
     }
-    if program_code not in mapping:
+    if code not in mapping:
         raise HTTPException(status_code=404, detail="Program not found")
-    return mapping[program_code]
+    return mapping[code]
 
-# --- Schedule ---
+# --- Schedule (clear weekday names; no IELTS) ---
 @app.get("/schedule")
 def schedule(season: Optional[str] = None):
-    if season == "summer":
-        return [{"course": "IELTS Summer Bootcamp", "weeks": 6, "days": ["Mon", "Wed", "Fri"]}]
+    if (season or "").lower() == "summer":
+        return [{
+            "course": "BCM Summer Intensive",
+            "weeks": 6,
+            "days": ["Monday", "Wednesday", "Friday"]
+        }]
     return []
 
 # --- Admin check ---
@@ -206,7 +215,7 @@ async def heygen_token():
         "Content-Type": "application/json",
     }
     payload = {
-        "avatar_id": AVATAR_ID,   # must be interactive avatar
+        "avatar_id": AVATAR_ID,   # interactive avatar
         "quality": "high",
         "version": "v2",          # LiveKit flow
     }
@@ -284,11 +293,11 @@ async def heygen_interrupt(item: InterruptIn):
 
 # --- Courses model ---
 class CourseIn(BaseModel):
-    name: str = Field(..., description="Course name (e.g., IELTS Foundation)")
+    name: str = Field(..., description="Course name (e.g., BCM English Level 1)")
     fee: float = Field(..., description="Fee amount (numeric)")
     start_date: Optional[str] = Field(None, description="YYYY-MM-DD")
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD")
-    time: Optional[str] = Field(None, description="e.g., Mon 7–9pm")
+    time: Optional[str] = Field(None, description="e.g., Mon/Wed/Fri 7–9pm")
     venue: Optional[str] = Field(None, description="Room / Center")
 
 # --- Courses CRUD ---
@@ -461,13 +470,17 @@ def _bcm_answer_from_db(q: str) -> str:
     if "ielts" in ql or "taeasla" in ql:
         return "I can only answer BCM questions. I don't have information about IELTS."
 
-    # Obvious off-topic guardrail
-    bcm_keywords = ("fee", "price", "cost", "schedule", "time", "timetable", "summer", "course", "class", "enroll")
-    if not any(k in ql for k in bcm_keywords):
+    # Keyword coverage (EN + common Chinese terms)
+    fee_words = ("fee", "price", "cost", "tuition", "學費", "費用", "幾多錢", "幾錢")
+    sched_words = ("schedule", "time", "timetable", "summer", "spring", "fall", "winter", "時間", "時間表", "時段", "上課時間", "暑期", "夏天")
+    course_words = ("course", "courses", "class", "classes", "課程", "班")
+    enroll_words = ("enroll", "enrol", "sign up", "報名", "登記", "註冊")
+
+    if not any(w in ql for w in (fee_words + sched_words + course_words + enroll_words)):
         return "I can only answer BCM-related questions such as fees, schedule, or courses."
 
     # Fees
-    if ("fee" in ql) or ("price" in ql) or ("cost" in ql):
+    if any(w in ql for w in fee_words):
         try:
             gi = get_fees("GI")
             return f"{gi['program']} costs {gi['currency']} {gi['fee']}."
@@ -479,12 +492,12 @@ def _bcm_answer_from_db(q: str) -> str:
         except Exception:
             return "I don't know the answer to that."
 
-    # Schedule
-    if ("schedule" in ql) or ("time" in ql) or ("timetable" in ql) or ("summer" in ql) or ("spring" in ql) or ("fall" in ql) or ("winter" in ql):
+    # Schedule (season detection; default to summer)
+    if any(w in ql for w in sched_words):
         season = "summer"
-        for s in ("summer", "spring", "fall", "winter"):
+        for s in ("summer", "spring", "fall", "winter", "暑期", "夏天"):
             if s in ql:
-                season = s
+                season = "summer" if s in ("暑期", "夏天") else s
                 break
         try:
             s = schedule(season=season)
@@ -497,11 +510,11 @@ def _bcm_answer_from_db(q: str) -> str:
             return "I don't know the answer to that."
 
     # Courses
-    if ("course" in ql) or ("class" in ql):
+    if any(w in ql for w in course_words):
         return _latest_course_summary()
 
     # Enrollment
-    if "enroll" in ql or "enrol" in ql or "sign up" in ql:
+    if any(w in ql for w in enroll_words):
         return "You can enroll online."
 
     # Fallback
@@ -547,20 +560,6 @@ def assistant_answer(payload: UserQuery):
         "enroll_hint": f"If yes, please click the enrollment form link: {ENROLL_LINK}",
         "rules": "BCM hard rules enforced"
     }
-
-# --- OpenAI passthrough example (optional) ---
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-if OPENAI_API_KEY:
-    client = OpenAI(api_key=OPENAI_API_KEY)
-else:
-    client = None
-
-class EchoIn(BaseModel):
-    text: str
-
-@app.post("/echo")
-def echo(item: EchoIn):
-    return {"echo": item.text}
 
 # --- Simple SSE/streaming example (placeholder) ---
 @app.get("/stream")
