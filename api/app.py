@@ -13,6 +13,7 @@ import io
 import time
 import httpx
 import json
+import re  # <-- TTS normalization uses regex
 
 # Optional OpenAI import (safe if package not installed)
 try:
@@ -300,6 +301,51 @@ class CourseIn(BaseModel):
     time: Optional[str] = Field(None, description="e.g., Mon/Wed/Fri 7–9pm")
     venue: Optional[str] = Field(None, description="Room / Center")
 
+# --- TTS helper: normalize compact time strings for clear speech ---
+def tts_friendly_time(s: str) -> str:
+    """
+    Normalize compact time strings for TTS, e.g.:
+    'Mon/Wed/Fri 7–9pm' -> 'Monday, Wednesday, Friday 7 to 9 pm'
+    """
+    if not s:
+        return ""
+    t = s.strip()
+
+    # Expand day abbreviations and make lists readable
+    day_map = {
+        "Mon": "Monday", "Tue": "Tuesday", "Wed": "Wednesday",
+        "Thu": "Thursday", "Fri": "Friday", "Sat": "Saturday", "Sun": "Sunday",
+    }
+    # 1) Replace slashes with comma+space so TTS pauses: Mon/Wed/Fri -> Mon, Wed, Fri
+    t = t.replace("/", ", ")
+
+    # 2) Expand English day abbreviations
+    for abbr, full in day_map.items():
+        t = re.sub(rf"\b{abbr}\b", full, t)
+
+    # 3) Normalize numeric ranges: 7–9pm / 7-9pm -> 7 to 9 pm  (preserve am/pm if present)
+    def _range_repl(m):
+        start = m.group(1)
+        end = m.group(2)
+        ampm = (m.group(3) or "").replace(".", "").lower().strip()  # am/pm/a.m./p.m.
+        if ampm in ("am", "pm"):
+            return f"{start} {ampm} to {end} {ampm}"
+        return f"{start} to {end}"
+
+    t = re.sub(
+        r"(\d{1,2})\s*[-–—]\s*(\d{1,2})\s*(a\.?m\.?|p\.?m\.?|am|pm)?",
+        _range_repl,
+        t,
+        flags=re.I,
+    )
+
+    # 4) Ensure a space before am/pm if missing: 9pm -> 9 pm
+    t = re.sub(r"(\d)(am|pm)\b", r"\1 \2", t, flags=re.I)
+
+    # 5) Collapse any double spaces
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
 # --- Courses CRUD ---
 @app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_add_course(course: CourseIn):
@@ -345,7 +391,7 @@ def courses_summary():
     if row["start_date"] and row["end_date"]:
         parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
     if row["time"]:
-        parts.append(f"Time: {row['time']}.")
+        parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")  # <-- TTS normalized
     if row["venue"]:
         parts.append(f"Venue: {row['venue']}.")
     return {"summary": " ".join(parts)}
@@ -458,7 +504,7 @@ def _latest_course_summary() -> str:
     if row["start_date"] and row["end_date"]:
         parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
     if row["time"]:
-        parts.append(f"Time: {row['time']}.")
+        parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")  # <-- TTS normalized
     if row["venue"]:
         parts.append(f"Venue: {row['venue']}.")
     return " ".join(parts)
