@@ -142,17 +142,6 @@ def assistant_prompt():
     # Frontend can fetch this if it wants to display the guardrails or send them to a model
     return {"prompt": BCM_RULES, "enroll_link": ENROLL_LINK}
 
-
-# --- BCM-only assistant intro (fixed message) ---
-@app.get("/assistant/intro")
-def assistant_intro():
-    return {
-        "intro": (
-            "Hello, I’m the BCM assistant. I can answer about GI fees, summer schedule, "
-            "and our latest courses. Ask me anything related to BCM."
-        )
-    }
-
 # --- FAQ ---
 @app.get("/faq")
 def get_faq() -> List[Dict[str, Any]]:
@@ -197,7 +186,7 @@ def admin_check():
     return {"ok": True, "message": "Admin access confirmed."}
 
 # =========================================================
-# === HeyGen CONFIG + TOKEN + PROXY =======================
+# === HeyGen CONFIG + TOKEN + PROXY + INTERRUPT ===========
 # =========================================================
 
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY") or os.getenv("ADMIN_KEY")
@@ -261,6 +250,36 @@ async def heygen_proxy(subpath: str, request: Request):
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type", "application/json"))
 
+# --- HeyGen: Interrupt convenience endpoint ---
+class InterruptIn(BaseModel):
+    session_id: str
+
+@app.post("/heygen/interrupt")
+async def heygen_interrupt(item: InterruptIn):
+    if not HEYGEN_API_KEY:
+        raise HTTPException(500, "HEYGEN_API_KEY missing")
+
+    url = f"{HEYGEN_BASE}/streaming.interrupt"
+    headers = {
+        "X-Api-Key": HEYGEN_API_KEY,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    payload = {"session_id": item.session_id}
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        r = await client.post(url, headers=headers, json=payload)
+
+    if r.status_code != 200:
+        raise HTTPException(r.status_code, f"heygen interrupt error: {r.text}")
+
+    try:
+        data = r.json()
+    except Exception:
+        data = {"raw": r.text}
+
+    return {"ok": True, "data": data}
+
 # =========================================================
 
 # --- Courses model ---
@@ -300,126 +319,6 @@ def list_courses() -> List[Dict[str, Any]]:
             FROM courses ORDER BY id DESC
         """).fetchall()
         return [dict(r) for r in rows]
-# --- BCM assistant: rule-based answerer (DB-only, no KB) ---
-from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
-
-class UserQuery(BaseModel):
-    text: str
-
-def _latest_course_summary() -> str:
-    from sqlite3 import Row
-    with get_db() as conn:
-        row: Optional[Row] = conn.execute("""
-            SELECT name, fee, start_date, end_date, time, venue
-            FROM courses
-            ORDER BY id DESC
-            LIMIT 1
-        """).fetchone()
-    if not row:
-        return "We currently have no courses listed."
-    parts = [f"Latest course: {row['name']}, fee {row['fee']}."]
-    if row["start_date"] and row["end_date"]:
-        parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
-    if row["time"]:
-        parts.append(f"Time: {row['time']}.")
-    if row["venue"]:
-        parts.append(f"Venue: {row['venue']}.")
-    return " ".join(parts)
-
-def _bcm_answer_from_db(q: str) -> str:
-    ql = (q or "").strip().lower()
-
-    # Forbidden topics
-    if "ielts" in ql or "taeasla" in ql:
-        return "I can only answer BCM questions. I don't have information about IELTS."
-
-    # Obvious off-topic guardrail: if it has none of our keywords but asks general stuff
-    bcm_keywords = ("fee", "price", "cost", "schedule", "time", "timetable", "summer", "course", "class", "enroll")
-    if not any(k in ql for k in bcm_keywords):
-        return "I can only answer BCM-related questions such as fees, schedule, or courses."
-
-    # Fees
-    if ("fee" in ql) or ("price" in ql) or ("cost" in ql):
-        try:
-            gi = get_fees("GI")  # uses your existing /fees mapping
-            return f"{gi['program']} costs {gi['currency']} {gi['fee']}."
-        except Exception:
-            pass
-        try:
-            hk = get_fees("HKDSE")
-            return f"{hk['program']} costs {hk['currency']} {hk['fee']}."
-        except Exception:
-            return "I don't know the answer to that."
-
-    # Schedule (prefer summer unless explicitly mentioned)
-    if ("schedule" in ql) or ("time" in ql) or ("timetable" in ql) or ("summer" in ql) or ("spring" in ql) or ("fall" in ql) or ("winter" in ql):
-        season = "summer"
-        for s in ("summer", "spring", "fall", "winter"):
-            if s in ql:
-                season = s
-                break
-        try:
-            s = schedule(season=season)
-            if s:
-                d = s[0]
-                days = ", ".join(d.get("days", [])) if isinstance(d.get("days"), list) else d.get("days")
-                return f"{d['course']}: {d['weeks']} weeks, days: {days}."
-            return "I don't know the answer to that."
-        except Exception:
-            return "I don't know the answer to that."
-
-    # Courses
-    if ("course" in ql) or ("class" in ql):
-        return _latest_course_summary()
-
-    # Enrollment keyword
-    if "enroll" in ql or "enrol" in ql or "sign up" in ql:
-        return "You can enroll online."
-
-    # Fallback
-    return "I don't know the answer to that."
-
-def _is_yes(q: str) -> bool:
-    ql = (q or "").strip().lower()
-    yes_words = {"yes","yeah","yep","ok","okay","sure","please","好的","要","係","係呀","好","是","行","可以"}
-    return any(w == ql or w in ql for w in yes_words)
-
-def _is_no(q: str) -> bool:
-    ql = (q or "").strip().lower()
-    no_words = {"no","nope","nah","not now","不用","唔要","唔使","不要","否","先唔好"}
-    return any(w == ql or w in ql for w in no_words)
-
-@app.post("/assistant/answer")
-def assistant_answer(payload: UserQuery):
-    user_text = (payload.text or "").strip()
-
-    # Rule 7/8: yes/no fast-path
-    if _is_yes(user_text):
-        return {
-            "reply": "Please click the enrollment form link.",
-            "enroll_link": ENROLL_LINK
-        }
-    if _is_no(user_text):
-        return {
-            "reply": "Okay, let me know if you have more questions."
-        }
-
-    # Normal answering path (rules 2–6, 9–13)
-    base = _bcm_answer_from_db(user_text)
-
-    # Enforce brevity: trim to ~250 chars max (optional)
-    if len(base) > 250:
-        base = base[:247] + "..."
-
-    # Always append the enrollment question
-    reply = f"{base} Would you like to enroll?"
-
-    return {
-        "reply": reply,
-        "enroll_hint": f"If yes, please click the enrollment form link: {ENROLL_LINK}",
-        "rules": "BCM hard rules enforced"
-    }
 
 # --- Helper: Course summary (place ABOVE /courses/{course_id}) ---
 @app.get("/courses/summary")
@@ -529,6 +428,125 @@ def recent_enrollments(
     with get_db() as conn:
         rows = conn.execute(sql, tuple(params)).fetchall()
         return [dict(r) for r in rows]
+
+# --- Assistant: BCM rule-based answers (DB-only, no KB) ---
+from sqlite3 import Row
+
+class UserQuery(BaseModel):
+    text: str
+
+def _latest_course_summary() -> str:
+    with get_db() as conn:
+        row: Optional[Row] = conn.execute("""
+            SELECT name, fee, start_date, end_date, time, venue
+            FROM courses
+            ORDER BY id DESC
+            LIMIT 1
+        """).fetchone()
+    if not row:
+        return "We currently have no courses listed."
+    parts = [f"Latest course: {row['name']}, fee {row['fee']}."]
+    if row["start_date"] and row["end_date"]:
+        parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
+    if row["time"]:
+        parts.append(f"Time: {row['time']}.")
+    if row["venue"]:
+        parts.append(f"Venue: {row['venue']}.")
+    return " ".join(parts)
+
+def _bcm_answer_from_db(q: str) -> str:
+    ql = (q or "").strip().lower()
+
+    # Forbidden topics
+    if "ielts" in ql or "taeasla" in ql:
+        return "I can only answer BCM questions. I don't have information about IELTS."
+
+    # Obvious off-topic guardrail
+    bcm_keywords = ("fee", "price", "cost", "schedule", "time", "timetable", "summer", "course", "class", "enroll")
+    if not any(k in ql for k in bcm_keywords):
+        return "I can only answer BCM-related questions such as fees, schedule, or courses."
+
+    # Fees
+    if ("fee" in ql) or ("price" in ql) or ("cost" in ql):
+        try:
+            gi = get_fees("GI")
+            return f"{gi['program']} costs {gi['currency']} {gi['fee']}."
+        except Exception:
+            pass
+        try:
+            hk = get_fees("HKDSE")
+            return f"{hk['program']} costs {hk['currency']} {hk['fee']}."
+        except Exception:
+            return "I don't know the answer to that."
+
+    # Schedule
+    if ("schedule" in ql) or ("time" in ql) or ("timetable" in ql) or ("summer" in ql) or ("spring" in ql) or ("fall" in ql) or ("winter" in ql):
+        season = "summer"
+        for s in ("summer", "spring", "fall", "winter"):
+            if s in ql:
+                season = s
+                break
+        try:
+            s = schedule(season=season)
+            if s:
+                d = s[0]
+                days = ", ".join(d.get("days", [])) if isinstance(d.get("days"), list) else d.get("days")
+                return f"{d['course']}: {d['weeks']} weeks, days: {days}."
+            return "I don't know the answer to that."
+        except Exception:
+            return "I don't know the answer to that."
+
+    # Courses
+    if ("course" in ql) or ("class" in ql):
+        return _latest_course_summary()
+
+    # Enrollment
+    if "enroll" in ql or "enrol" in ql or "sign up" in ql:
+        return "You can enroll online."
+
+    # Fallback
+    return "I don't know the answer to that."
+
+def _is_yes(q: str) -> bool:
+    ql = (q or "").strip().lower()
+    yes_words = {"yes","yeah","yep","ok","okay","sure","please","好的","要","係","係呀","好","是","行","可以"}
+    return any(w == ql or w in ql for w in yes_words)
+
+def _is_no(q: str) -> bool:
+    ql = (q or "").strip().lower()
+    no_words = {"no","nope","nah","not now","不用","唔要","唔使","不要","否","先唔好"}
+    return any(w == ql or w in ql for w in no_words)
+
+@app.post("/assistant/answer")
+def assistant_answer(payload: UserQuery):
+    user_text = (payload.text or "").strip()
+
+    # Rule 7/8: yes/no fast-path
+    if _is_yes(user_text):
+        return {
+            "reply": "Please click the enrollment form link.",
+            "enroll_link": ENROLL_LINK
+        }
+    if _is_no(user_text):
+        return {
+            "reply": "Okay, let me know if you have more questions."
+        }
+
+    # Normal answering path (rules 2–6, 9–13)
+    base = _bcm_answer_from_db(user_text)
+
+    # Enforce brevity
+    if len(base) > 250:
+        base = base[:247] + "..."
+
+    # Always append the enrollment question
+    reply = f"{base} Would you like to enroll?"
+
+    return {
+        "reply": reply,
+        "enroll_hint": f"If yes, please click the enrollment form link: {ENROLL_LINK}",
+        "rules": "BCM hard rules enforced"
+    }
 
 # --- OpenAI passthrough example (optional) ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
