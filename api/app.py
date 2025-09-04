@@ -186,7 +186,8 @@ def schedule(season: Optional[str] = None):
         return [{
             "course": "BCM Summer Intensive",
             "weeks": 6,
-            "days": ["Monday", "Wednesday", "Friday"]
+            "days": ["Monday", "Wednesday", "Friday"],
+            "time": "Mon/Wed/Fri 7–9pm",  # <-- seed compact time so TTS can normalize it
         }]
     return []
 
@@ -504,7 +505,7 @@ def _latest_course_summary() -> str:
     if row["start_date"] and row["end_date"]:
         parts.append(f"Runs {row['start_date']} to {row['end_date']}.")
     if row["time"]:
-        parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")  # <-- TTS normalized
+        parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")
     if row["venue"]:
         parts.append(f"Venue: {row['venue']}.")
     return " ".join(parts)
@@ -550,7 +551,9 @@ def _bcm_answer_from_db(q: str) -> str:
             if s:
                 d = s[0]
                 days = ", ".join(d.get("days", [])) if isinstance(d.get("days"), list) else d.get("days")
-                return f"{d['course']}: {d['weeks']} weeks, days: {days}."
+                time_str = d.get("time")
+                time_part = f", time: {tts_friendly_time(str(time_str))}" if time_str else ""
+                return f"{d['course']}: {d['weeks']} weeks, days: {days}{time_part}."
             return "I don't know the answer to that."
         except Exception:
             return "I don't know the answer to that."
