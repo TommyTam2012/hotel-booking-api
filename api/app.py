@@ -27,7 +27,7 @@ DB_PATH = str(APP_DIR / "bcm_demo.db")
 
 app = FastAPI(
     title="BCM Demo API",
-    version="1.1.0",
+    version="1.2.0",
     description="Backend for BCM demo: courses, enrollments, fees, schedules, and HeyGen token/proxy.",
 )
 
@@ -53,47 +53,70 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    try:
+        cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any((c[1] == column) for c in cols)
+    except Exception:
+        return False
+
+
 def init_db():
     with get_db() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS courses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            fee REAL NOT NULL,
-            start_date TEXT,
-            end_date TEXT,
-            time TEXT,
-            venue TEXT
+        # Base tables
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS courses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                fee REAL NOT NULL,
+                start_date TEXT,
+                end_date TEXT,
+                time TEXT,
+                venue TEXT
+            )
+            """
         )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS enrollments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT,
-            email TEXT,
-            phone TEXT,
-            program_code TEXT,
-            cohort_code TEXT,
-            timezone TEXT,
-            notes TEXT,
-            source TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS enrollments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT,
+                email TEXT,
+                phone TEXT,
+                program_code TEXT,
+                cohort_code TEXT,
+                timezone TEXT,
+                notes TEXT,
+                source TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
         )
-        """)
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS faq (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            q TEXT,
-            a TEXT
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS faq (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                q TEXT,
+                a TEXT
+            )
+            """
         )
-        """)
+
+        # --- Schema migration: add seats column if missing ---
+        if not _column_exists(conn, "courses", "seats"):
+            conn.execute("ALTER TABLE courses ADD COLUMN seats INTEGER DEFAULT 0")
+
         conn.commit()
+
 
 init_db()
 
 # --- Admin key guard ---
 ADMIN_KEY = os.getenv("ADMIN_KEY") or os.getenv("VITE_BCM_ADMIN_KEY")
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
+
 
 def require_admin(x_admin_key: str = Security(api_key_header)):
     if not ADMIN_KEY:
@@ -104,14 +127,17 @@ def require_admin(x_admin_key: str = Security(api_key_header)):
         raise HTTPException(status_code=403, detail="Forbidden (bad X-Admin-Key)")
     return True
 
+
 # --- Basic routes ---
 @app.get("/")
 def root():
     return RedirectResponse(url="/static/enroll.html")
 
+
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 # --- BCM assistant: fixed intro + hard rules (expanded) ---
 ENROLL_LINK = "/static/enroll.html"  # adjust if your path differs
@@ -131,7 +157,9 @@ BCM_RULES = (
     "11) Single Role: Do not switch roles or act as an AI model; you are permanently the BCM assistant. "
     "12) Data Priority: If multiple courses exist, summarize the latest one first. "
     "13) Brevity: Keep answers to 1–3 sentences before the enrollment question."
+    "14) Course and Course Detials: Answer by saying, please refer to our bcm website for more info, www.taeasla.com."
 )
+
 
 @app.get("/assistant/intro")
 def assistant_intro():
@@ -143,9 +171,11 @@ def assistant_intro():
         )
     }
 
+
 @app.get("/assistant/prompt")
 def assistant_prompt():
     return {"prompt": BCM_RULES, "enroll_link": ENROLL_LINK}
+
 
 # --- FAQ ---
 @app.get("/faq")
@@ -154,9 +184,11 @@ def get_faq() -> List[Dict[str, Any]]:
         rows = conn.execute("SELECT id, q, a FROM faq ORDER BY id ASC").fetchall()
         return [dict(r) for r in rows]
 
+
 class FAQIn(BaseModel):
     q: str
     a: str
+
 
 @app.post("/faq", dependencies=[Security(require_admin)], tags=["admin"])
 def add_faq(item: FAQIn):
@@ -166,6 +198,7 @@ def add_faq(item: FAQIn):
         fid = cur.lastrowid
         row = conn.execute("SELECT id, q, a FROM faq WHERE id = ?", (fid,)).fetchone()
         return dict(row)
+
 
 # --- Fees (BCM labels, case-insensitive) ---
 @app.get("/fees/{program_code}")
@@ -179,6 +212,7 @@ def get_fees(program_code: str):
         raise HTTPException(status_code=404, detail="Program not found")
     return mapping[code]
 
+
 # --- Schedule (clear weekday names; no IELTS) ---
 @app.get("/schedule")
 def schedule(season: Optional[str] = None):
@@ -191,17 +225,20 @@ def schedule(season: Optional[str] = None):
         }]
     return []
 
+
 # --- Admin check ---
 @app.get("/admin/check", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_check():
     return {"ok": True, "message": "Admin access confirmed."}
 
+
 # =========================================================
-# === HeyGen CONFIG + TOKEN + PROXY + INTERRUPT ===========
+# === HeyGen CONFIG + TOKEN + PROXY + INTERRUPT ==========
 # =========================================================
 
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY") or os.getenv("ADMIN_KEY")
 HEYGEN_BASE = "https://api.heygen.com/v1"
+
 
 @app.post("/heygen/token")
 async def heygen_token():
@@ -235,6 +272,7 @@ async def heygen_token():
 
     return data
 
+
 @app.api_route("/heygen/proxy/{subpath:path}", methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"], tags=["public"])
 async def heygen_proxy(subpath: str, request: Request):
     if not HEYGEN_API_KEY:
@@ -261,9 +299,11 @@ async def heygen_proxy(subpath: str, request: Request):
     return Response(content=r.content, status_code=r.status_code,
                     media_type=r.headers.get("content-type", "application/json"))
 
+
 # --- HeyGen: Interrupt convenience endpoint ---
 class InterruptIn(BaseModel):
     session_id: str
+
 
 @app.post("/heygen/interrupt")
 async def heygen_interrupt(item: InterruptIn):
@@ -291,6 +331,7 @@ async def heygen_interrupt(item: InterruptIn):
 
     return {"ok": True, "data": data}
 
+
 # =========================================================
 
 # --- Courses model ---
@@ -301,6 +342,8 @@ class CourseIn(BaseModel):
     end_date: Optional[str] = Field(None, description="YYYY-MM-DD")
     time: Optional[str] = Field(None, description="e.g., Mon/Wed/Fri 7–9pm")
     venue: Optional[str] = Field(None, description="Room / Center")
+    seats: Optional[int] = Field(0, ge=0, description="Seats remaining (defaults to 0)")
+
 
 # --- TTS helper: normalize compact time strings for clear speech ---
 def tts_friendly_time(s: str) -> str:
@@ -347,45 +390,59 @@ def tts_friendly_time(s: str) -> str:
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
+
 # --- Courses CRUD ---
 @app.post("/admin/courses", dependencies=[Security(require_admin)], tags=["admin"])
 def admin_add_course(course: CourseIn):
     return add_course(course)
 
+
 @app.post("/courses", dependencies=[Security(require_admin)], tags=["courses"])
 def add_course(course: CourseIn):
     with get_db() as conn:
-        cur = conn.execute("""
-            INSERT INTO courses (name, fee, start_date, end_date, time, venue)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (course.name, course.fee, course.start_date, course.end_date, course.time, course.venue))
+        cur = conn.execute(
+            """
+            INSERT INTO courses (name, fee, start_date, end_date, time, venue, seats)
+            VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, 0))
+            """,
+            (course.name, course.fee, course.start_date, course.end_date, course.time, course.venue, course.seats),
+        )
         course_id = cur.lastrowid
-        row = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue
+        row = conn.execute(
+            """
+            SELECT id, name, fee, start_date, end_date, time, venue, seats
             FROM courses WHERE id = ?
-        """, (course_id,)).fetchone()
+            """,
+            (course_id,),
+        ).fetchone()
         conn.commit()
         return dict(row)
+
 
 @app.get("/courses")
 def list_courses() -> List[Dict[str, Any]]:
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue
+        rows = conn.execute(
+            """
+            SELECT id, name, fee, start_date, end_date, time, venue, seats
             FROM courses ORDER BY id DESC
-        """).fetchall()
+            """
+        ).fetchall()
         return [dict(r) for r in rows]
+
 
 # --- Helper: Course summary (place ABOVE /courses/{course_id}) ---
 @app.get("/courses/summary")
 def courses_summary():
     with get_db() as conn:
-        row = conn.execute("""
-            SELECT name, fee, start_date, end_date, time, venue
+        row = conn.execute(
+            """
+            SELECT name, fee, start_date, end_date, time, venue, seats
             FROM courses
             ORDER BY id DESC
             LIMIT 1
-        """).fetchone()
+            """
+        ).fetchone()
     if not row:
         return {"summary": "We currently have no courses listed."}
     parts = [f"Latest course: {row['name']}, fee {row['fee']}."]
@@ -395,18 +452,25 @@ def courses_summary():
         parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")  # <-- TTS normalized
     if row["venue"]:
         parts.append(f"Venue: {row['venue']}.")
+    if "seats" in row.keys() and row["seats"] is not None and int(row["seats"]) > 0:
+        parts.append(f"Seats left: {int(row['seats'])}.")
     return {"summary": " ".join(parts)}
+
 
 @app.get("/courses/{course_id}")
 def get_course(course_id: int) -> Dict[str, Any]:
     with get_db() as conn:
-        row = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue
+        row = conn.execute(
+            """
+            SELECT id, name, fee, start_date, end_date, time, venue, seats
             FROM courses WHERE id = ?
-        """, (course_id,)).fetchone()
+            """,
+            (course_id,),
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Course not found")
         return dict(row)
+
 
 @app.delete("/courses/{course_id}", dependencies=[Security(require_admin)], tags=["admin"])
 def delete_course(course_id: int):
@@ -417,20 +481,26 @@ def delete_course(course_id: int):
             raise HTTPException(status_code=404, detail="Course not found")
         return {"ok": True, "deleted": course_id}
 
+
 # --- CSV export for courses ---
 @app.get("/courses/export.csv")
 def export_courses_csv():
     with get_db() as conn:
-        rows = conn.execute("""
-            SELECT id, name, fee, start_date, end_date, time, venue
+        rows = conn.execute(
+            """
+            SELECT id, name, fee, start_date, end_date, time, venue, seats
             FROM courses ORDER BY id DESC
-        """).fetchall()
+            """
+        ).fetchall()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["id", "name", "fee", "start_date", "end_date", "time", "venue"])
+    writer.writerow(["id", "name", "fee", "start_date", "end_date", "time", "venue", "seats"])
     for r in rows:
-        writer.writerow([r["id"], r["name"], r["fee"], r["start_date"], r["end_date"], r["time"], r["venue"]])
+        writer.writerow([
+            r["id"], r["name"], r["fee"], r["start_date"], r["end_date"], r["time"], r["venue"], r.get("seats", 0),
+        ])
     return Response(content=output.getvalue(), media_type="text/csv")
+
 
 # --- Enrollment ---
 class EnrollmentIn(BaseModel):
@@ -444,6 +514,7 @@ class EnrollmentIn(BaseModel):
     notes: Optional[str] = None
     source: Optional[str] = Field(default="web", description="Where this came from (web/journal/etc)")
 
+
 @app.post("/enroll", tags=["enroll"])
 def enroll(data: EnrollmentIn):
     full_name_val = (data.full_name or data.name or "").strip()
@@ -451,6 +522,28 @@ def enroll(data: EnrollmentIn):
         raise HTTPException(status_code=422, detail="full_name or name is required")
 
     with get_db() as conn:
+        # pick latest course
+        row = conn.execute(
+            "SELECT id, seats FROM courses ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="No course available")
+        if row["seats"] is None:
+            # Treat missing/null as 0 to be safe
+            current_seats = 0
+        else:
+            current_seats = int(row["seats"])
+
+        if current_seats <= 0:
+            return {"ok": False, "message": "Sorry, this course is full."}
+
+        # deduct seat (guard against negative)
+        conn.execute(
+            "UPDATE courses SET seats = seats - 1 WHERE id = ? AND seats > 0",
+            (row["id"],),
+        )
+
+        # record enrollment
         conn.execute(
             """
             INSERT INTO enrollments
@@ -458,22 +551,32 @@ def enroll(data: EnrollmentIn):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                full_name_val, data.email, data.phone, data.program_code,
-                data.cohort_code, data.timezone, data.notes, data.source
+                full_name_val,
+                data.email,
+                data.phone,
+                data.program_code,
+                data.cohort_code,
+                data.timezone,
+                data.notes,
+                data.source,
             ),
         )
         conn.commit()
-        return {"ok": True, "message": "Enrollment saved."}
+
+    return {"ok": True, "message": "Enrollment confirmed. Seat deducted."}
+
 
 @app.get("/enrollments/recent", dependencies=[Security(require_admin)], tags=["admin"])
 def recent_enrollments(
     limit: int = Query(10, ge=1, le=100),
     source: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    sql = """
+    sql = (
+        """
       SELECT id, full_name, email, phone, program_code, cohort_code, timezone, notes, source, created_at
       FROM enrollments
-    """
+        """
+    )
     params: List[Any] = []
     if source:
         sql += " WHERE source = ?"
@@ -485,20 +588,25 @@ def recent_enrollments(
         rows = conn.execute(sql, tuple(params)).fetchall()
         return [dict(r) for r in rows]
 
+
 # --- Assistant: BCM rule-based answers (DB-only, no KB) ---
 from sqlite3 import Row
+
 
 class UserQuery(BaseModel):
     text: str
 
+
 def _latest_course_summary() -> str:
     with get_db() as conn:
-        row: Optional[Row] = conn.execute("""
-            SELECT name, fee, start_date, end_date, time, venue
+        row: Optional[Row] = conn.execute(
+            """
+            SELECT name, fee, start_date, end_date, time, venue, seats
             FROM courses
             ORDER BY id DESC
             LIMIT 1
-        """).fetchone()
+            """
+        ).fetchone()
     if not row:
         return "We currently have no courses listed."
     parts = [f"Latest course: {row['name']}, fee {row['fee']}."]
@@ -508,7 +616,10 @@ def _latest_course_summary() -> str:
         parts.append(f"Time: {tts_friendly_time(str(row['time']))}.")
     if row["venue"]:
         parts.append(f"Venue: {row['venue']}.")
+    if "seats" in row.keys() and row["seats"] is not None and int(row["seats"]) > 0:
+        parts.append(f"Seats left: {int(row['seats'])}.")
     return " ".join(parts)
+
 
 def _bcm_answer_from_db(q: str) -> str:
     ql = (q or "").strip().lower()
@@ -569,15 +680,18 @@ def _bcm_answer_from_db(q: str) -> str:
     # Fallback
     return "I don't know the answer to that."
 
+
 def _is_yes(q: str) -> bool:
     ql = (q or "").strip().lower()
     yes_words = {"yes","yeah","yep","ok","okay","sure","please","好的","要","係","係呀","好","是","行","可以"}
     return any(w == ql or w in ql for w in yes_words)
 
+
 def _is_no(q: str) -> bool:
     ql = (q or "").strip().lower()
     no_words = {"no","nope","nah","not now","不用","唔要","唔使","不要","否","先唔好"}
     return any(w == ql or w in ql for w in no_words)
+
 
 @app.post("/assistant/answer")
 def assistant_answer(payload: UserQuery):
@@ -609,6 +723,7 @@ def assistant_answer(payload: UserQuery):
         "enroll_hint": f"If yes, please click the enrollment form link: {ENROLL_LINK}",
         "rules": "BCM hard rules enforced"
     }
+
 
 # --- Simple SSE/streaming example (placeholder) ---
 @app.get("/stream")
