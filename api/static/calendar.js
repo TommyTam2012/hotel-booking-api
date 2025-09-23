@@ -1,4 +1,4 @@
-// ===== Config =====
+// ===== Config (merged) =====
 const BASE_URL = window.location.origin; // ✅ works locally & on Render
 
 // Locale (Chinese)
@@ -11,7 +11,8 @@ const LABELS = {
   enterGuestName: "请输入住客姓名。",
   rangeHasSold: "所选日期范围包含已满的夜晚。",
   couldNotLoad: "无法加载房态。",
-  booked: "预订成功！库存已更新。"
+  booked: "预订成功！库存已更新。",
+  reset: "已重置选择"
 };
 
 // DOM refs
@@ -25,13 +26,18 @@ const qtySel = document.getElementById("qty");
 const bookBtn = document.getElementById("bookBtn");
 const nightsInfo = document.getElementById("nightsInfo");
 const toastEl = document.getElementById("toast");
+const resetBtn = document.getElementById("resetBtn"); // NEW
 
-// ===== NEW: Load room types from API and populate the <select> =====
+// ===== Load room types from API and populate the <select> =====
 async function loadRoomTypes() {
   try {
     const res = await fetch(`${BASE_URL}/room_types`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const list = await res.json(); // [{id, name}, ...]
+    if (!Array.isArray(list) || list.length === 0) {
+      roomTypeSel.innerHTML = `<option value="">暂无房型</option>`;
+      return;
+    }
     roomTypeSel.innerHTML = list.map(rt => `<option value="${rt.id}">${rt.name}</option>`).join('');
   } catch (e) {
     console.error("Failed to load /room_types", e);
@@ -66,11 +72,12 @@ function buildMonthGrid(monthDate) {
 const todayISO = toISO(new Date());
 let viewMonth = startOfMonth(new Date());
 let checkIn = "";
-let checkOut = ""; // exclusive
+let checkOut = ""; // checkout-exclusive
 let availabilityCache = {}; // { 'YYYY-MM-DD': {price,left} }
 
 // ===== UI helpers =====
 function showToast(msg) {
+  if (!toastEl) return;
   toastEl.textContent = msg;
   toastEl.style.display = 'block';
   setTimeout(()=> toastEl.style.display='none', 1800);
@@ -99,7 +106,7 @@ function markRangeCells() {
   });
 }
 
-// === 1) Gray-out sold nights immediately (and disable cell) ===
+// === Gray-out sold nights immediately (and disable cell) ===
 function paintAvailability() {
   document.querySelectorAll(".cell").forEach(c => {
     const d = c.dataset.date;
@@ -111,14 +118,23 @@ function paintAvailability() {
       a.className = "a";
       c.appendChild(a);
     }
+    let p = c.querySelector(".p");
+    if (!p) {
+      p = document.createElement("div");
+      p.className = "p";
+      c.appendChild(p);
+    }
+
     if (info) {
-      const sold = info.left <= 0;
+      const sold = (info.left ?? 0) <= 0;
       c.classList.toggle("sold", sold);
-      c.classList.toggle("disabled", sold);   // <-- per spec: also disable sold cells
+      c.classList.toggle("disabled", sold);
       a.textContent = sold ? LABELS.sold : LABELS.left(info.left);
+      p.textContent = (info.price != null) ? `¥${info.price}` : "";
     } else {
       c.classList.remove("sold","disabled");
       a.textContent = '';
+      p.textContent = '';
     }
   });
 }
@@ -145,8 +161,12 @@ function renderMonth(container, baseDate) {
 
   const cells = buildMonthGrid(baseDate);
   cells.forEach(d => {
+    // Use a focusable button-like div for keyboard access
     const cell = document.createElement("div");
     cell.className = "cell";
+    cell.setAttribute("role", "button");
+    cell.setAttribute("tabindex", d ? "0" : "-1");
+
     if (d) {
       const iso = toISO(d);
       cell.dataset.date = iso;
@@ -156,9 +176,12 @@ function renderMonth(container, baseDate) {
       dayEl.className = "d";
       dayEl.textContent = String(d.getDate());
       const priceEl = document.createElement("div");
-      priceEl.className = "p";
+      priceEl.className = "p"; // filled by paintAvailability
 
       cell.addEventListener("click", () => onCellClick(iso));
+      cell.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onCellClick(iso); }
+      });
 
       cell.appendChild(dayEl);
       cell.appendChild(priceEl);
@@ -181,6 +204,7 @@ function renderMonths() {
   paintAvailability();
   markRangeCells();
   updateNightsInfo();
+  updateBookBtn();
 }
 
 // ===== Handlers =====
@@ -195,18 +219,18 @@ function onCellClick(iso) {
     checkOut = "";
     checkInInput.value = checkIn;
     checkOutInput.value = "";
-    bookBtn.disabled = true;
+    updateBookBtn();
     renderMonths();
     return;
   }
 
-  // === 2) Block selection across ANY sold night (using cache) ===
   // choose checkout (clicked date = actual checkout day, exclusive end)
   if (cmp(iso, checkIn) > 0) {
     const tentativeOut = iso;
     const endInc = addDays(tentativeOut, -1);
     const need = Number(qtySel.value || 1);
 
+    // block selection across ANY sold night
     let cur = checkIn, ok = true;
     while (cmp(cur, endInc) <= 0) {
       const info = availabilityCache[cur];
@@ -218,25 +242,34 @@ function onCellClick(iso) {
     // proceed
     checkOut = tentativeOut;                 // checkout-exclusive
     checkOutInput.value = checkOut;
+    updateBookBtn();
     renderMonths();
     fetchAvailabilityForRange(checkIn, checkOut);
-    bookBtn.disabled = false;
   } else {
     // clicked before start — reset start
     checkIn = iso;
     checkOut = "";
     checkInInput.value = checkIn;
     checkOutInput.value = "";
-    bookBtn.disabled = true;
+    updateBookBtn();
     renderMonths();
   }
 }
 
-prevBtn.addEventListener("click", () => {
+function updateBookBtn(){
+  const ok =
+    !!roomTypeSel?.value &&
+    !!checkIn &&
+    !!checkOut &&
+    Number(qtySel?.value || 0) > 0;
+  if (bookBtn) bookBtn.disabled = !ok;
+}
+
+prevBtn?.addEventListener("click", () => {
   viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth()-1, 1);
   renderMonths();
 });
-nextBtn.addEventListener("click", () => {
+nextBtn?.addEventListener("click", () => {
   viewMonth = new Date(viewMonth.getFullYear(), viewMonth.getMonth()+1, 1);
   renderMonths();
 });
@@ -247,29 +280,34 @@ function validISO(s){ return ISO_RX.test(s); }
 function onInputChange() {
   const ci = (checkInInput.value || "").trim();
   const co = (checkOutInput.value || "").trim();
-  if (!ci || !co) { bookBtn.disabled = true; renderMonths(); return; }
-  if (!validISO(ci) || !validISO(co)) { bookBtn.disabled = true; return; }
-  if (cmp(ci, co) >= 0) { bookBtn.disabled = true; return; }
+  if (!ci || !co || !validISO(ci) || !validISO(co) || cmp(ci, co) >= 0) {
+    checkIn = validISO(ci) ? ci : "";
+    checkOut = "";
+    updateBookBtn();
+    renderMonths();
+    return;
+  }
 
   checkIn = ci;
-  checkOut = co; // checkout-exclusive expectation by contract
+  checkOut = co; // checkout-exclusive expectation
+  updateBookBtn();
   renderMonths();
   fetchAvailabilityForRange(checkIn, checkOut);
 
-  // === 3) Also prevent typing a sold-out range ===
+  // Also prevent typing a sold-out range
   const need = Number(qtySel.value || 1);
   let cur = ci, ok = true, endInc = addDays(co, -1);
   while (cmp(cur, endInc) <= 0) {
     const info = availabilityCache[cur];
-    if (info && info.left < need) { ok = false; break; } // per your spec
+    if (info && info.left < need) { ok = false; break; }
     cur = addDays(cur, 1);
   }
   bookBtn.disabled = !ok;
   if (!ok) showToast(LABELS.rangeHasSold);
 }
-checkInInput.addEventListener("input", onInputChange);
-checkOutInput.addEventListener("input", onInputChange);
-qtySel?.addEventListener("change", onInputChange);
+checkInInput?.addEventListener("input", onInputChange);
+checkOutInput?.addEventListener("input", onInputChange);
+qtySel?.addEventListener("change", () => { updateBookBtn(); onInputChange(); });
 
 // ===== Availability =====
 async function fetchAvailabilityForRange(ci, co) {
@@ -342,19 +380,31 @@ async function bookSelected() {
   }
 }
 
+// ===== Reset (no page reload) =====
+function resetSelection(){
+  checkIn = "";
+  checkOut = "";
+  if (checkInInput) checkInInput.value = "";
+  if (checkOutInput) checkOutInput.value = "";
+  updateBookBtn();
+  renderMonths();
+  showToast(LABELS.reset);
+}
+
 // ===== Init =====
 (function init(){
   viewMonth = startOfMonth(new Date());
   renderMonths();
-  bookBtn.addEventListener("click", bookSelected);
+  bookBtn?.addEventListener("click", bookSelected);
+  resetBtn?.addEventListener("click", resetSelection); // NEW
 
-  // ===== NEW: populate rooms first, then optionally refresh availability =====
+  // populate rooms, then (optionally) refresh availability
   loadRoomTypes().then(() => {
     if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut);
   });
 
-  // ===== NEW: when room changes, re-check availability for current range =====
-  roomTypeSel.addEventListener("change", () => {
+  // when room changes, re-check availability for current range
+  roomTypeSel?.addEventListener("change", () => {
     if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut);
   });
 })();
