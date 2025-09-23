@@ -198,23 +198,22 @@ def init_hotel_db():
 def seed_hotel_if_empty():
     from datetime import date, timedelta
     with get_db() as conn:
-        n = conn.execute("SELECT COUNT(*) FROM room_types").fetchone()[0]
-        if n == 0:
-            room_types = [
-                "标准大床房",
-                "标准双床房",
-                "高级大床房",
-                "豪华海景房",
-                "家庭房",
-                "行政套房",
-                "总统套房",
-                "无障碍客房"
-            ]
-            for rt in room_types:
-                conn.execute("INSERT INTO room_types (name) VALUES (?)", (rt,))
-            conn.commit()
+        room_types = [
+            "标准大床房",
+            "标准双床房",
+            "高级大床房",
+            "豪华海景房",
+            "家庭房",
+            "行政套房",
+            "总统套房",
+            "无障碍客房"
+        ]
+        # Always ensure all 8 exist (INSERT OR IGNORE keeps existing ones)
+        for rt in room_types:
+            conn.execute("INSERT OR IGNORE INTO room_types (name) VALUES (?)", (rt,))
+        conn.commit()
 
-        # Seed 14 days for Deluxe
+        # Seed 14 days for Deluxe (only if found)
         rid_row = conn.execute("SELECT id FROM room_types WHERE name='Deluxe'").fetchone()
         if rid_row:
             rid = rid_row[0]
@@ -227,8 +226,8 @@ def seed_hotel_if_empty():
                     (rid, key)
                 ).fetchone()
                 if not exists:
-                    price = 780 + (i % 5) * 35 + (150 if d.weekday() >= 5 else 0)  # weekends higher
-                    left = 5 if i % 9 != 0 else 0                              # some days sold out
+                    price = 780 + (i % 5) * 35 + (150 if d.weekday() >= 5 else 0)
+                    left = 5 if i % 9 != 0 else 0
                     conn.execute(
                         "INSERT INTO room_inventory (room_type_id, date, price, left) VALUES (?,?,?,?)",
                         (rid, key, float(price), int(left))
