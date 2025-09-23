@@ -200,20 +200,19 @@ def seed_hotel_if_empty():
     with get_db() as conn:
         n = conn.execute("SELECT COUNT(*) FROM room_types").fetchone()[0]
         if n == 0:
-    room_types = [
-        "标准大床房",
-        "标准双床房",
-        "高级大床房",
-        "豪华海景房",
-        "家庭房",
-        "行政套房",
-        "总统套房",
-        "无障碍客房"
-    ]
-    for rt in room_types:
-        conn.execute("INSERT INTO room_types (name) VALUES (?)", (rt,))
-    conn.commit()
-
+            room_types = [
+                "标准大床房",
+                "标准双床房",
+                "高级大床房",
+                "豪华海景房",
+                "家庭房",
+                "行政套房",
+                "总统套房",
+                "无障碍客房"
+            ]
+            for rt in room_types:
+                conn.execute("INSERT INTO room_types (name) VALUES (?)", (rt,))
+            conn.commit()
 
         # Seed 14 days for Deluxe
         rid_row = conn.execute("SELECT id FROM room_types WHERE name='Deluxe'").fetchone()
@@ -346,7 +345,6 @@ def book(payload: BookIn):
                    AND left >= ?
             """, (qty, payload.room_type, r["date"], qty))
             if cur.rowcount == 0:
-                # If any night fails, abort
                 raise HTTPException(409, "Just sold out while booking. Please try another range.")
 
         # Record booking with quantity
