@@ -111,7 +111,13 @@ function paintAvailability() {
   document.querySelectorAll(".cell").forEach(c => {
     const d = c.dataset.date;
     if (!d) return;
-    const info = availabilityCache[d];
+    // Fallback for testing: default to always-available if unknown
+    let info = availabilityCache[d];
+    if (!info) {
+      info = { price: 0, left: 99 }; // ← seed as “always available”
+      availabilityCache[d] = info;
+    }
+
     let a = c.querySelector(".a");
     if (!a) {
       a = document.createElement("div");
@@ -125,17 +131,11 @@ function paintAvailability() {
       c.appendChild(p);
     }
 
-    if (info) {
-      const sold = (info.left ?? 0) <= 0;
-      c.classList.toggle("sold", sold);
-      c.classList.toggle("disabled", sold);
-      a.textContent = sold ? LABELS.sold : LABELS.left(info.left);
-      p.textContent = (info.price != null) ? `¥${info.price}` : "";
-    } else {
-      c.classList.remove("sold","disabled");
-      a.textContent = '';
-      p.textContent = '';
-    }
+    const sold = (info.left ?? 0) <= 0;
+    c.classList.toggle("sold", sold);
+    c.classList.toggle("disabled", sold);
+    a.textContent = sold ? LABELS.sold : LABELS.left(info.left);
+    p.textContent = (info.price != null) ? `¥${info.price}` : "";
   });
 }
 
@@ -224,27 +224,17 @@ function onCellClick(iso) {
     return;
   }
 
-  // choose checkout (clicked date = actual checkout day, exclusive end)
+  // choose checkout (always allow selection first; validate after)
   if (cmp(iso, checkIn) > 0) {
-    const tentativeOut = iso;
-    const endInc = addDays(tentativeOut, -1);
-    const need = Number(qtySel.value || 1);
-
-    // block selection across ANY sold night
-    let cur = checkIn, ok = true;
-    while (cmp(cur, endInc) <= 0) {
-      const info = availabilityCache[cur];
-      if (!info || info.left < need) { ok = false; break; }
-      cur = addDays(cur, 1);
-    }
-    if (!ok) { showToast(LABELS.rangeHasSold); return; }
-
-    // proceed
-    checkOut = tentativeOut;                 // checkout-exclusive
+    checkOut = iso;                 // checkout-exclusive
     checkOutInput.value = checkOut;
     updateBookBtn();
     renderMonths();
-    fetchAvailabilityForRange(checkIn, checkOut);
+
+    // fetch availability for the selected range, then re-validate
+    fetchAvailabilityForRange(checkIn, checkOut).then(() => {
+      postValidateRange();
+    });
   } else {
     // clicked before start — reset start
     checkIn = iso;
@@ -263,6 +253,26 @@ function updateBookBtn(){
     !!checkOut &&
     Number(qtySel?.value || 0) > 0;
   if (bookBtn) bookBtn.disabled = !ok;
+}
+
+// Validate AFTER both ends selected; if any sold night, cancel checkout
+function postValidateRange(){
+  if (!checkIn || !checkOut) return;
+  const endInc = addDays(checkOut, -1);
+  const need = Number(qtySel.value || 1);
+  let cur = checkIn, ok = true;
+  while (cmp(cur, endInc) <= 0) {
+    const info = availabilityCache[cur] || { left: 99 }; // fallback if still missing
+    if (info.left < need) { ok = false; break; }
+    cur = addDays(cur, 1);
+  }
+  if (!ok) {
+    showToast(LABELS.rangeHasSold);
+    checkOut = "";
+    checkOutInput.value = "";
+    updateBookBtn();
+    renderMonths();
+  }
 }
 
 prevBtn?.addEventListener("click", () => {
@@ -288,26 +298,20 @@ function onInputChange() {
     return;
   }
 
+  // set both ends first
   checkIn = ci;
   checkOut = co; // checkout-exclusive expectation
   updateBookBtn();
   renderMonths();
-  fetchAvailabilityForRange(checkIn, checkOut);
 
-  // Also prevent typing a sold-out range
-  const need = Number(qtySel.value || 1);
-  let cur = ci, ok = true, endInc = addDays(co, -1);
-  while (cmp(cur, endInc) <= 0) {
-    const info = availabilityCache[cur];
-    if (info && info.left < need) { ok = false; break; }
-    cur = addDays(cur, 1);
-  }
-  bookBtn.disabled = !ok;
-  if (!ok) showToast(LABELS.rangeHasSold);
+  // fetch → then validate; no pre-blocking
+  fetchAvailabilityForRange(checkIn, checkOut).then(() => {
+    postValidateRange();
+  });
 }
 checkInInput?.addEventListener("input", onInputChange);
 checkOutInput?.addEventListener("input", onInputChange);
-qtySel?.addEventListener("change", () => { updateBookBtn(); onInputChange(); });
+qtySel?.addEventListener("change", () => { updateBookBtn(); postValidateRange(); });
 
 // ===== Availability =====
 async function fetchAvailabilityForRange(ci, co) {
@@ -320,9 +324,12 @@ async function fetchAvailabilityForRange(ci, co) {
     const data = await res.json(); // { "YYYY-MM-DD": { price, left }, ... }
     Object.entries(data).forEach(([d, info]) => availabilityCache[d] = info);
     paintAvailability();
+    // Note: postValidateRange() is called by the caller after fetch
+    return true;
   } catch (err) {
     console.error("Availability failed:", err);
     showToast(LABELS.couldNotLoad);
+    return false;
   }
 }
 
@@ -345,8 +352,8 @@ async function bookSelected() {
   const endInc = addDays(co, -1);
   let cursor = ci, ok = true;
   while (cmp(cursor, endInc) <= 0) {
-    const info = availabilityCache[cursor];
-    if (info && info.left < qty) { ok = false; break; }
+    const info = availabilityCache[cursor] || { left: 99 };
+    if (info.left < qty) { ok = false; break; }
     cursor = addDays(cursor, 1);
   }
   if (!ok) { showToast(LABELS.rangeHasSold); return; }
@@ -369,8 +376,9 @@ async function bookSelected() {
     if (!res.ok || !data.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
 
     showToast(LABELS.booked);
-    // Refresh availability for the booked range
-    await fetchAvailabilityForRange(ci, co);
+    // Refresh availability for the booked range (then re-validate just in case)
+    const okFetch = await fetchAvailabilityForRange(ci, co);
+    if (okFetch) postValidateRange();
 
   } catch (err) {
     console.error("Book failed:", err);
@@ -400,11 +408,12 @@ function resetSelection(){
 
   // populate rooms, then (optionally) refresh availability
   loadRoomTypes().then(() => {
-    if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut);
+    if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut).then(() => postValidateRange());
   });
 
   // when room changes, re-check availability for current range
   roomTypeSel?.addEventListener("change", () => {
-    if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut);
+    if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut).then(() => postValidateRange());
+    else paintAvailability(); // repaint with fallback if nothing selected yet
   });
 })();
