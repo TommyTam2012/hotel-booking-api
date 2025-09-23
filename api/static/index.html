@@ -190,7 +190,7 @@
       const sel = document.getElementById('roomType');
       if(!sel) return;
       try{
-        const res = await fetch('/room_types');
+        const res = await fetch(window.location.origin + '/room_types');
         if(!res.ok) throw new Error('HTTP ' + res.status);
         const list = await res.json(); // 期望: [{id, name}]
         if(!Array.isArray(list) || list.length === 0){
