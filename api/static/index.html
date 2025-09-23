@@ -23,7 +23,7 @@
     min-height:360px;
     background-color:#000;
     background-image:url('https://raw.githubusercontent.com/TommyTam2012/advance_app_web/main/HotelLogo.png');
-    background-size:contain;   /* show full image without cropping */
+    background-size:contain;
     background-repeat:no-repeat;
     background-position:center;
     display:flex; align-items:flex-end; justify-content:center;
@@ -38,12 +38,8 @@
     padding:20px;
     margin-bottom:20px;
   }
-  .brand h1{
-    margin:0; font-size:28px; letter-spacing:.04em; color:#fff;
-  }
-  .brand p{
-    margin:6px 0 0; color:var(--muted); font-size:15px;
-  }
+  .brand h1{ margin:0; font-size:28px; letter-spacing:.04em; color:#fff; }
+  .brand p{ margin:6px 0 0; color:var(--muted); font-size:15px; }
 
   /* ===== Page Wrap ===== */
   .wrap{max-width:980px; margin:0 auto; padding:24px;}
@@ -58,6 +54,7 @@
   .field input,.field select{background:transparent; border:0; color:var(--text); font-size:15px; width:100%}
   .btn{background:var(--accent); color:#021024; border:0; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:700}
   .btn[disabled]{opacity:.45; cursor:not-allowed}
+  .btn.secondary{ background:#0e1533; color:var(--text); border:1px solid rgba(255,255,255,.12); }
   .calendar{background:var(--card); border-radius:18px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
   .cal-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px}
   .nav-btn{background:#0e1533; border:0; color:var(--text); padding:8px 10px; border-radius:10px; cursor:pointer}
@@ -97,7 +94,6 @@
     border-radius: 8px;
     padding: 8px;
   }
-
   select option {
     background-color: #1a1a1a;   /* dark background for options */
     color: #ffffff;              /* white text */
@@ -123,7 +119,6 @@
       <div class="field" style="max-width:220px">
         <div>
           <label for="roomType">房型</label>
-          <!-- NEW: dynamic dropdown; starts as loading -->
           <select id="roomType" aria-label="选择房型">
             <option value="">加载中…</option>
           </select>
@@ -156,6 +151,7 @@
       </div>
 
       <button id="bookBtn" class="btn" disabled>预订所选日期</button>
+      <button id="resetBtn" class="btn secondary" type="button" title="重选日期（不刷新页面）">重选日期</button>
     </div>
 
     <!-- 选择的日期 -->
