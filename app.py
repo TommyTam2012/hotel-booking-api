@@ -12,6 +12,8 @@ import csv
 import io
 import time
 import json
+import smtplib, ssl
+from email.message import EmailMessage
 
 # =========================
 # App setup & Constants
@@ -68,6 +70,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# =========================
+# Email helper (supports GMAIL_* and legacy SMTP_* envs)
+# =========================
+def _send_booking_email(subject: str, html: str, to_addr: str):
+    # Prefer the new names; fall back to legacy if present
+    user = os.getenv("GMAIL_USER") or os.getenv("SMTP_USER")
+    pwd  = os.getenv("GMAIL_APP_PASSWORD") or os.getenv("SMTP_PASS")
+
+    if not user or not pwd:
+        print("[notify] GMAIL_USER/GMAIL_APP_PASSWORD (or SMTP_USER/SMTP_PASS) not set; skipping email.")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = user
+    msg["To"] = to_addr
+    msg.set_content("HTML version required.")
+    msg.add_alternative(html, subtype="html")
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as smtp:
+        smtp.login(user, pwd)
+        smtp.send_message(msg)
+    print(f"[notify] Email sent to {to_addr}")
 
 # =========================
 # Debug / Static helper routes
@@ -323,6 +350,29 @@ def book(payload: BookIn):
         """, (payload.room_type, payload.check_in, payload.check_out,
               payload.name, payload.email, payload.phone, payload.notes, qty))
         c.commit()
+
+    # --- notify by email ---
+    to_addr = os.getenv("NOTIFY_TO", "tommytam2012@gmail.com")
+    subject = f"New Booking: RT#{payload.room_type} {payload.check_in} → {payload.check_out} (x{qty})"
+    html = f"""
+    <h2>New Booking Confirmed</h2>
+    <ul>
+      <li><b>Room Type ID:</b> {payload.room_type}</li>
+      <li><b>Check-in:</b> {payload.check_in}</li>
+      <li><b>Check-out:</b> {payload.check_out}</li>
+      <li><b>Quantity:</b> {qty}</li>
+      <li><b>Name:</b> {payload.name}</li>
+      <li><b>Email:</b> {payload.email or '-'}</li>
+      <li><b>Phone:</b> {payload.phone or '-'}</li>
+      <li><b>Notes:</b> {payload.notes or '-'}</li>
+    </ul>
+    <p>Sent by BCM + Hotel API.</p>
+    """
+    try:
+        _send_booking_email(subject, html, to_addr)
+    except Exception as e:
+        print(f"[notify] Failed to send email: {e}")
+
     return {"ok": True, "message": f"Booking confirmed. {qty} room(s) deducted per night."}
 
 @app.get("/bookings", tags=["Hotel"])
@@ -340,6 +390,7 @@ def list_bookings(limit: int = Query(10, ge=1, le=100)):
 # ============ BCM DEMO ENDPOINTS =========================
 # =========================================================
 # (BCM-related endpoints unchanged — kept fully intact in your file)
+# If you need them added here, paste your existing BCM routes below.
 
 # Optional: local dev entrypoint
 if __name__ == "__main__":
