@@ -44,6 +44,11 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # =========================
+# DEMO MODE FLAG
+# =========================
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"
+
+# =========================
 # CORS
 # =========================
 origins = [
@@ -286,6 +291,17 @@ def availability(room_type: int, start: str, end: str):
     Return availability (inclusive of end date) for a room_type between start and end.
     Response: { "YYYY-MM-DD": { "price": float, "left": int }, ... }
     """
+    if DEMO_MODE:
+        from datetime import datetime, timedelta
+        s = datetime.fromisoformat(start)
+        e = datetime.fromisoformat(end)
+        out = {}
+        d = s
+        while d <= e:
+            out[d.date().isoformat()] = {"price": 0.0, "left": 99}
+            d += timedelta(days=1)
+        return out
+
     with get_db() as c:
         rows = c.execute("""
             SELECT date, price, left
@@ -313,6 +329,9 @@ def book(payload: BookIn):
     Create a booking (checkout exclusive) and decrement room_inventory.left per night.
     Returns: {"ok": True, "message": "..."}
     """
+    if DEMO_MODE:
+        return {"ok": True, "message": f"[DEMO] Booking confirmed for {payload.check_in} → {payload.check_out} ({payload.quantity} room(s))."}
+
     qty = int(payload.quantity or 1)
     if qty < 1:
         raise HTTPException(400, "quantity must be >= 1")
