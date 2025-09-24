@@ -22,7 +22,7 @@ STATIC_DIR = APP_DIR / "api" / "static"
 
 # NEW: import seeder
 from contextlib import asynccontextmanager
-from seed import seed_if_needed
+from seed.seed import seed_if_needed
 from seed.seed_hotel import seed_hotel   # <-- added
 
 @asynccontextmanager
