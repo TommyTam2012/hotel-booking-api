@@ -11,13 +11,43 @@
     --ring: rgba(78,161,255,.35);
   }
   *{box-sizing:border-box}
-  body{
-    font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
-    background: url('https://raw.githubusercontent.com/TommyTam2012/hotel-booking-api/main/beach.png') no-repeat center center fixed;
-    background-size: cover;
-    color:var(--text);
-    margin:0; padding:0;
+
+  /* --- Background with dark scrim so text stays readable --- */
+  body {
+    margin: 0; padding: 0; background: none !important;
+    font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;
+    color: var(--text);
   }
+  body::before{
+    content:""; position:fixed; inset:0;
+    background: url('https://raw.githubusercontent.com/TommyTam2012/hotel-booking-api/main/beach.png') center/cover no-repeat fixed;
+    filter: brightness(0.45) saturate(1.05);
+    z-index:-2;
+  }
+  body::after{
+    content:""; position:fixed; inset:0;
+    background: linear-gradient(180deg, rgba(0,0,0,.20), rgba(0,0,0,.45));
+    z-index:-1;
+  }
+
+  /* --- Make the calendar card pop over bright areas --- */
+  .calendar{
+    background: rgba(18,24,51,.90);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+    backdrop-filter: blur(2px);
+  }
+
+  /* --- Cells --- */
+  .cell{ background: rgba(255,255,255,.06); }
+  .cell.sold{ background: rgba(255,107,107,.12); }
+  .d, .p, .a, .dow, .month h4{ text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+
+  /* --- Top fields --- */
+  .field{ background: rgba(18,24,51,.92); border:1px solid rgba(255,255,255,.10); }
+  select, .field input{ color:#fff; }
 
   /* ===== Hero Header ===== */
   .hero{
@@ -49,16 +79,15 @@
 
   .topbar,.controls{display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:16px}
   .field{
-    flex:1 1 220px; background:var(--card); border-radius:14px; padding:10px 14px;
+    flex:1 1 220px; border-radius:14px; padding:10px 14px;
     display:flex; align-items:center; gap:10px; border:1px solid transparent
   }
   .field:focus-within{border-color:var(--accent); box-shadow:0 0 0 6px var(--ring)}
   .field label{font-size:12px; color:var(--muted); display:block}
-  .field input,.field select{background:transparent; border:0; color:var(--text); font-size:15px; width:100%}
+  .field input,.field select{background:transparent; border:0; font-size:15px; width:100%}
   .btn{background:var(--accent); color:#021024; border:0; padding:10px 14px; border-radius:12px; cursor:pointer; font-weight:700}
   .btn[disabled]{opacity:.45; cursor:not-allowed}
   .btn.secondary{ background:#0e1533; color:var(--text); border:1px solid rgba(255,255,255,.12); }
-  .calendar{background:var(--card); border-radius:18px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25)}
   .cal-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px}
   .nav-btn{background:#0e1533; border:0; color:var(--text); padding:8px 10px; border-radius:10px; cursor:pointer}
   .months{display:grid; grid-template-columns:1fr 1fr; gap:16px}
@@ -67,7 +96,7 @@
   .grid{display:grid; grid-template-columns:repeat(7,1fr); gap:6px}
   .dow{font-size:12px; color:var(--muted); text-align:center; padding:6px 0}
   .cell{
-    position:relative; min-height:64px; border-radius:12px; background:rgba(255,255,255,.02);
+    position:relative; min-height:64px; border-radius:12px;
     display:flex; flex-direction:column; padding:6px; cursor:pointer; transition:transform .08s
   }
   .cell:hover{transform:translateY(-1px)}
@@ -75,8 +104,6 @@
   .cell .d{font-weight:700; font-size:14px}
   .cell .p{font-size:12px; margin-top:auto}
   .cell .a{font-size:11px; color:var(--muted)}
-  .cell.sold{background:rgba(255,107,107,.08)}
-  .cell.sold .a{color:var(--sold)}
   .in-range{background:linear-gradient(180deg, rgba(78,161,255,.18), rgba(78,161,255,.09))}
   .checkin,.checkout{outline:2px solid var(--accent-2)}
   .legend{display:flex; gap:14px; align-items:center; color:var(--muted); font-size:12px; margin-top:10px}
@@ -91,15 +118,15 @@
 
   /* === New Dropdown Styling === */
   select {
-    background-color: #1a1a1a;   /* dark background */
-    color: #ffffff;              /* white text */
-    border: 1px solid #4ea1ff;   /* blue border to match theme */
+    background-color: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #4ea1ff;
     border-radius: 8px;
     padding: 8px;
   }
   select option {
-    background-color: #1a1a1a;   /* dark background for options */
-    color: #ffffff;              /* white text */
+    background-color: #1a1a1a;
+    color: #ffffff;
   }
 </style>
 </head>
