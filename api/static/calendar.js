@@ -83,10 +83,12 @@ function showToast(msg) {
   setTimeout(()=> toastEl.style.display='none', 1800);
 }
 
+// 🔔 Restored + clarified nights banner
 function updateNightsInfo() {
+  if (!nightsInfo) return;
   if (checkIn && checkOut) {
     const nights = daysBetween(checkIn, checkOut);
-    nightsInfo.textContent = nights > 0 ? `${nights} 晚` : "";
+    nightsInfo.textContent = nights > 0 ? `${nights} 晚（${checkIn} → ${checkOut}）` : "";
   } else {
     nightsInfo.textContent = "";
   }
@@ -203,7 +205,7 @@ function renderMonths() {
   renderMonth(monthsEl, m2);
   paintAvailability();
   markRangeCells();
-  updateNightsInfo();
+  updateNightsInfo(); // 🔔 ensure banner refreshes with each render
   updateBookBtn();
 }
 
@@ -221,6 +223,7 @@ function onCellClick(iso) {
     checkOutInput.value = "";
     updateBookBtn();
     renderMonths();
+    updateNightsInfo(); // 🔔 immediate feedback
     return;
   }
 
@@ -230,10 +233,12 @@ function onCellClick(iso) {
     checkOutInput.value = checkOut;
     updateBookBtn();
     renderMonths();
+    updateNightsInfo(); // 🔔 immediate feedback
 
     // fetch availability for the selected range, then re-validate
     fetchAvailabilityForRange(checkIn, checkOut).then(() => {
       postValidateRange();
+      updateNightsInfo(); // ensure banner stays correct after any correction
     });
   } else {
     // clicked before start — reset start
@@ -243,6 +248,7 @@ function onCellClick(iso) {
     checkOutInput.value = "";
     updateBookBtn();
     renderMonths();
+    updateNightsInfo(); // 🔔 immediate feedback
   }
 }
 
@@ -272,6 +278,7 @@ function postValidateRange(){
     checkOutInput.value = "";
     updateBookBtn();
     renderMonths();
+    updateNightsInfo();
   }
 }
 
@@ -295,6 +302,7 @@ function onInputChange() {
     checkOut = "";
     updateBookBtn();
     renderMonths();
+    updateNightsInfo();
     return;
   }
 
@@ -303,15 +311,17 @@ function onInputChange() {
   checkOut = co; // checkout-exclusive expectation
   updateBookBtn();
   renderMonths();
+  updateNightsInfo();
 
   // fetch → then validate; no pre-blocking
   fetchAvailabilityForRange(checkIn, checkOut).then(() => {
     postValidateRange();
+    updateNightsInfo();
   });
 }
 checkInInput?.addEventListener("input", onInputChange);
 checkOutInput?.addEventListener("input", onInputChange);
-qtySel?.addEventListener("change", () => { updateBookBtn(); postValidateRange(); });
+qtySel?.addEventListener("change", () => { updateBookBtn(); postValidateRange(); updateNightsInfo(); });
 
 // ===== Availability =====
 async function fetchAvailabilityForRange(ci, co) {
@@ -396,6 +406,7 @@ function resetSelection(){
   if (checkOutInput) checkOutInput.value = "";
   updateBookBtn();
   renderMonths();
+  updateNightsInfo();
   showToast(LABELS.reset);
 }
 
@@ -415,5 +426,6 @@ function resetSelection(){
   roomTypeSel?.addEventListener("change", () => {
     if (checkIn && checkOut) fetchAvailabilityForRange(checkIn, checkOut).then(() => postValidateRange());
     else paintAvailability(); // repaint with fallback if nothing selected yet
+    updateNightsInfo();
   });
 })();
