@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query, Security, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, StreamingResponse, Response, FileResponse, JSONResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, Response, FileResponse, JSONResponse, HTMLResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     # optional teardown later if needed
 
 app = FastAPI(
-    title="BCM + Hotel API",
+    title="Hotel API",
     version="2.0.0",
     description="Backend for BCM demo (courses, enrollments) and Hotel Booking (rooms, availability, bookings).",
     lifespan=lifespan
@@ -256,7 +256,7 @@ def root():
     # If static exists, send to index.html; else show basic welcome JSON
     if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
         return RedirectResponse(url="/static/index.html")
-    return {"ok": True, "message": "BCM + Hotel API running", "docs": "/docs"}
+    return {"ok": True, "message": "Hotel API running", "docs": "/docs"}
 
 @app.get("/health")
 def health():
@@ -366,7 +366,7 @@ def book(payload: BookIn):
       <li><b>Phone:</b> {payload.phone or '-'}</li>
       <li><b>Notes:</b> {payload.notes or '-'}</li>
     </ul>
-    <p>Sent by BCM + Hotel API.</p>
+    <p>Sent by Hotel API.</p>
     """
     try:
         _send_booking_email(subject, html, to_addr)
@@ -391,6 +391,174 @@ def list_bookings(limit: int = Query(10, ge=1, le=100)):
 # =========================================================
 # (BCM-related endpoints unchanged — kept fully intact in your file)
 # If you need them added here, paste your existing BCM routes below.
+
+# =========================================================
+# ============ BILINGUAL DOCS (/docs & /redoc) ============
+# =========================================================
+@app.get("/docs", include_in_schema=False)
+async def custom_bilingual_docs(request: Request, lang: str = "en"):
+    # en / zh via ?lang=... and dropdown
+    lang = "zh" if str(lang).lower().startswith("zh") else "en"
+    html = f"""
+<!DOCTYPE html>
+<html lang="{ 'zh-CN' if lang=='zh' else 'en' }">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{"酒店预订 API 文档" if lang=="zh" else "Hotel Booking API Docs"}</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css"/>
+  <style>
+    body {{ margin:0; background:#0b1220; }}
+    .topbar {{ display:flex; justify-content:space-between; align-items:center; padding:8px 16px; background:#0f172a; }}
+    .topbar .title {{ color:#e5e7eb; font-weight:700; }}
+    .lang-box select {{ background:#111827; color:#e5e7eb; border:1px solid #374151; padding:6px 10px; border-radius:8px; }}
+    #swagger-ui {{ max-width: 1400px; margin: 0 auto; background:#0b1220; }}
+    .swagger-ui .opblock-tag.no-desc span,
+    .swagger-ui .opblock-tag small,
+    .swagger-ui .model-title,
+    .swagger-ui .info .title,
+    .swagger-ui .info p,
+    .swagger-ui .markdown p,
+    .swagger-ui,
+    .swagger-ui * {{ color: #e5e7eb !important; }}
+    .swagger-ui .opblock {{ background:#0f172a; border-color:#1f2937; }}
+    .swagger-ui .info .title small.version-stamp {{ color:#93c5fd !important; border-color:#1f2937; }}
+    .swagger-ui .opblock .opblock-section-header {{ background:#111827; }}
+    .swagger-ui .tab li, .swagger-ui .opblock-summary-method {{ color:#111827 !important; }}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">{'酒店预订 API 文档' if lang=='zh' else 'Hotel Booking API Docs'}</div>
+    <div class="lang-box">
+      <select id="langSelect" aria-label="Language">
+        <option value="en" {"selected" if lang=="en" else ""}>English</option>
+        <option value="zh" {"selected" if lang=="zh" else ""}>中文</option>
+      </select>
+    </div>
+  </div>
+  <div id="swagger-ui"></div>
+
+  <script src="https://unpkg.com/swagger-ui-dist/swagger-ui-bundle.js"></script>
+  <script>
+    // --- Simple i18n dictionary for common Swagger UI labels ---
+    const I18N = {{
+      zh: {{
+        "Authorize": "授权",
+        "Try it out": "试一试",
+        "Execute": "执行",
+        "Cancel": "取消",
+        "Clear": "清除",
+        "Parameters": "参数",
+        "Request body": "请求体",
+        "Responses": "响应",
+        "Response": "响应",
+        "Example Value": "示例值",
+        "Schema": "模式",
+        "Curl": "Curl 命令",
+        "Request URL": "请求 URL",
+        "Server": "服务器",
+        "Servers": "服务器",
+        "Request samples": "请求示例",
+        "Response samples": "响应示例",
+        "Download": "下载",
+        "Copy": "复制",
+        "Hide": "隐藏",
+        "Show": "显示",
+        "No content": "无内容",
+        "Model": "模型"
+      }},
+      en: {{}}
+    }};
+    const LANG = "{lang}";
+
+    function translateUI() {{
+      if (LANG !== "zh") return; // English default
+      const map = I18N.zh;
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      const targets = [];
+      while (walker.nextNode()) {{
+        const node = walker.currentNode;
+        const src = node.nodeValue && node.nodeValue.trim();
+        if (!src) continue;
+        const t = map[src];
+        if (t) targets.push([node, t]);
+      }}
+      targets.forEach(([node, t]) => {{
+        node.nodeValue = node.nodeValue.replace(node.nodeValue.trim(), t);
+      }});
+    }}
+
+    const observer = new MutationObserver(() => translateUI());
+    observer.observe(document.body, {{ childList:true, subtree:true }});
+
+    // Init Swagger UI
+    window.ui = SwaggerUIBundle({{
+      url: "{request.url_for('openapi')}",
+      dom_id: '#swagger-ui',
+      deepLinking: true,
+      presets: [SwaggerUIBundle.presets.apis],
+      layout: "BaseLayout",
+    }});
+
+    setTimeout(translateUI, 800);
+
+    // Language switcher with URL persistence
+    document.getElementById('langSelect').addEventListener('change', function() {{
+      const v = this.value;
+      const u = new URL(window.location.href);
+      u.searchParams.set('lang', v);
+      window.location.href = u.toString();
+    }});
+  </script>
+</body>
+</html>
+    """
+    return HTMLResponse(html)
+
+@app.get("/redoc", include_in_schema=False)
+async def custom_bilingual_redoc(request: Request, lang: str = "en"):
+    lang = "zh" if str(lang).lower().startswith("zh") else "en"
+    title = "酒店预订 API 文档 (ReDoc)" if lang == "zh" else "Hotel Booking API Docs (ReDoc)"
+    html = f"""
+<!DOCTYPE html>
+<html lang="{ 'zh-CN' if lang=='zh' else 'en' }">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>{title}</title>
+  <style>
+    body {{ margin:0; background:#0b1220; color:#e5e7eb; }}
+    .topbar {{ display:flex; justify-content:space-between; align-items:center; padding:8px 16px; background:#0f172a; }}
+    .topbar .title {{ color:#e5e7eb; font-weight:700; }}
+    .lang-box select {{ background:#111827; color:#e5e7eb; border:1px solid #374151; padding:6px 10px; border-radius:8px; }}
+    redoc, .menu-content, .api-content {{ --text-color-primary:#e5e7eb; --bg-color:#0b1220; }}
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="title">{title}</div>
+    <div class="lang-box">
+      <select id="langSelect" aria-label="Language">
+        <option value="en" {"selected" if lang=="en" else ""}>English</option>
+        <option value="zh" {"selected" if lang=="zh" else ""}>中文</option>
+      </select>
+    </div>
+  </div>
+  <redoc spec-url="{request.url_for('openapi')}"></redoc>
+  <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  <script>
+    document.getElementById('langSelect').addEventListener('change', function(){{
+      const v = this.value;
+      const u = new URL(window.location.href);
+      u.searchParams.set('lang', v);
+      window.location.href = u.toString();
+    }});
+  </script>
+</body>
+</html>
+    """
+    return HTMLResponse(html)
 
 # Optional: local dev entrypoint
 if __name__ == "__main__":
