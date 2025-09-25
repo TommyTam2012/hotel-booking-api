@@ -36,12 +36,21 @@ async def lifespan(app: FastAPI):
     yield
     # optional teardown later if needed
 
+# Optional switch to disable serving /openapi.json (Swagger needs it; only disable if you accept that /docs won't load)
+DISABLE_OPENAPI_JSON = os.getenv("DISABLE_OPENAPI_JSON", "false").lower() == "true"
+
 app = FastAPI(
     title="Hotel API",
     version="2.0.0",
     description="Backend for BCM demo (courses, enrollments) and Hotel Booking (rooms, availability, bookings).",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url=None,   # disable built-in Swagger UI (we serve our own bilingual /docs)
+    redoc_url=None   # disable built-in ReDoc (we serve our own bilingual /redoc)
 )
+
+# If explicitly requested, block schema (NOTE: this breaks Swagger UI)
+if DISABLE_OPENAPI_JSON:
+    app.openapi_url = None  # removes /openapi.json route
 
 # Ensure static directory exists (won't crash if missing; some routes handle 404 gracefully)
 if STATIC_DIR.exists():
@@ -396,9 +405,15 @@ def list_bookings(limit: int = Query(10, ge=1, le=100)):
 # ============ BILINGUAL DOCS (/docs & /redoc) ============
 # =========================================================
 @app.get("/docs", include_in_schema=False)
-async def custom_bilingual_docs(request: Request, lang: str = "en"):
-    # en / zh via ?lang=... and dropdown
+async def custom_bilingual_docs(request: Request, lang: str = "zh"):
+    # default to Chinese; switch with ?lang=en
     lang = "zh" if str(lang).lower().startswith("zh") else "en"
+
+    # If schema disabled, show a helpful message (Swagger can't render without it)
+    if DISABLE_OPENAPI_JSON:
+        warn = "已禁用 /openapi.json，因此无法显示 Swagger 文档。请取消环境变量 DISABLE_OPENAPI_JSON 再试。"
+        return HTMLResponse(f"<html><body><h2>{warn}</h2></body></html>", status_code=503)
+
     html = f"""
 <!DOCTYPE html>
 <html lang="{ 'zh-CN' if lang=='zh' else 'en' }">
@@ -494,11 +509,11 @@ async def custom_bilingual_docs(request: Request, lang: str = "en"):
 
     // Init Swagger UI
     window.ui = SwaggerUIBundle({{
-      url: "{request.url_for('openapi')}",
+      url: "{app.openapi_url or '/openapi.json'}",
       dom_id: '#swagger-ui',
       deepLinking: true,
       presets: [SwaggerUIBundle.presets.apis],
-      layout: "BaseLayout",
+      layout: "BaseLayout"
     }});
 
     setTimeout(translateUI, 800);
@@ -517,8 +532,13 @@ async def custom_bilingual_docs(request: Request, lang: str = "en"):
     return HTMLResponse(html)
 
 @app.get("/redoc", include_in_schema=False)
-async def custom_bilingual_redoc(request: Request, lang: str = "en"):
+async def custom_bilingual_redoc(request: Request, lang: str = "zh"):
     lang = "zh" if str(lang).lower().startswith("zh") else "en"
+
+    if DISABLE_OPENAPI_JSON:
+        warn = "已禁用 /openapi.json，因此无法显示 ReDoc 文档。请取消环境变量 DISABLE_OPENAPI_JSON 再试。"
+        return HTMLResponse(f"<html><body><h2>{warn}</h2></body></html>", status_code=503)
+
     title = "酒店预订 API 文档 (ReDoc)" if lang == "zh" else "Hotel Booking API Docs (ReDoc)"
     html = f"""
 <!DOCTYPE html>
@@ -545,7 +565,7 @@ async def custom_bilingual_redoc(request: Request, lang: str = "en"):
       </select>
     </div>
   </div>
-  <redoc spec-url="{request.url_for('openapi')}"></redoc>
+  <redoc spec-url="{app.openapi_url or '/openapi.json'}"></redoc>
   <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
   <script>
     document.getElementById('langSelect').addEventListener('change', function(){{
