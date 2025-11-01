@@ -20,6 +20,7 @@ from seed.seed_hotel import seed_hotel
 APP_DIR = Path(__file__).parent.resolve()
 DB_PATH = os.getenv("HOTEL_DB_FILE", str(APP_DIR / "bcm_demo.db"))
 STATIC_DIR = APP_DIR / "api" / "static"
+PDF_DIR = STATIC_DIR / "pdfs"   # <— put your PDFs here
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -239,6 +240,21 @@ def get_demo_rooms():
         {"id": 3, "name": "家庭套房 / Family Suite", "price": 1500},
         {"id": 4, "name": "总统套房 / Presidential Suite", "price": 2500},
     ]
+
+# =========================
+# Force-inline PDF serving
+# =========================
+@app.get("/pdf/{filename}", tags=["Files"])
+def serve_pdf(filename: str):
+    """Always open PDF inline in browser for stable preview behaviour."""
+    path = PDF_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename={filename}"}
+    )
 
 class BookIn(BaseModel):
     room_type: int
