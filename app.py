@@ -227,6 +227,19 @@ def availability(room_type: int, start: str, end: str):
         """, (room_type, start, end)).fetchall()
         return {r["date"]: {"price": float(r["price"]), "left": int(r["left"])} for r in rows}
 
+# =========================
+# Compatibility / Demo endpoint
+# =========================
+@app.get("/rooms", tags=["Hotel"])
+def get_demo_rooms():
+    """Return demo room list with prices for backward compatibility."""
+    return [
+        {"id": 1, "name": "标准客房 / Standard Room", "price": 800},
+        {"id": 2, "name": "豪华客房 / Deluxe Room", "price": 1200},
+        {"id": 3, "name": "家庭套房 / Family Suite", "price": 1500},
+        {"id": 4, "name": "总统套房 / Presidential Suite", "price": 2500},
+    ]
+
 class BookIn(BaseModel):
     room_type: int
     check_in: str
@@ -280,10 +293,10 @@ async def custom_bilingual_docs(request: Request, lang: str = "zh"):
 
     html = f"""
 <!DOCTYPE html>
-<html lang="{ 'zh-CN' if lang=='zh' else 'en' }">
+<html lang="{{ 'zh-CN' if lang=='zh' else 'en' }}">
 <head>
   <meta charset="utf-8"/>
-  <title>{"酒店预订 API 文档" if lang=="zh" else "Hotel Booking API Docs"}</title>
+  <title>{{"酒店预订 API 文档" if lang=="zh" else "Hotel Booking API Docs"}}</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist/swagger-ui.css"/>
   <style>
     body {{ margin:0; background:#ffffff; }}
@@ -295,11 +308,11 @@ async def custom_bilingual_docs(request: Request, lang: str = "zh"):
 </head>
 <body>
   <div class="topbar">
-    <div class="title">{'酒店预订 API 文档' if lang=='zh' else 'Hotel Booking API Docs'}</div>
+    <div class="title">{{'酒店预订 API 文档' if lang=='zh' else 'Hotel Booking API Docs'}}</div>
     <div class="lang-box">
       <select id="langSelect">
-        <option value="en" {"selected" if lang=="en" else ""}>English</option>
-        <option value="zh" {"selected" if lang=="zh" else ""}>中文</option>
+        <option value="en" {{"selected" if lang=="en" else ""}}>English</option>
+        <option value="zh" {{"selected" if lang=="zh" else ""}}>中文</option>
       </select>
     </div>
   </div>
