@@ -20,7 +20,7 @@ from seed.seed_hotel import seed_hotel
 APP_DIR = Path(__file__).parent.resolve()
 DB_PATH = os.getenv("HOTEL_DB_FILE", str(APP_DIR / "bcm_demo.db"))
 STATIC_DIR = APP_DIR / "api" / "static"
-PDF_DIR = STATIC_DIR / "pdfs"   # <— put your PDFs here
+PDF_DIR = STATIC_DIR / "pdfs"   # store your PDFs here
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -202,6 +202,7 @@ def health():
 # Hotel Endpoints
 # =========================
 from datetime import datetime, timedelta
+from random import randint
 
 @app.get("/room_types", tags=["Hotel"])
 def list_room_types():
@@ -211,22 +212,32 @@ def list_room_types():
 
 @app.get("/availability", tags=["Hotel"])
 def availability(room_type: int, start: str, end: str):
-    if DEMO_MODE:
-        s = datetime.fromisoformat(start)
-        e = datetime.fromisoformat(end)
-        out = {}
-        d = s
-        while d <= e:
-            out[d.date().isoformat()] = {"price": 0.0, "left": 99}
-            d += timedelta(days=1)
-        return out
+    """Return availability and prices; auto-fill missing dates for demo stability."""
+    s = datetime.fromisoformat(start)
+    e = datetime.fromisoformat(end)
+    out = {}
+    d = s
     with get_db() as c:
         rows = c.execute("""
             SELECT date, price, left FROM room_inventory
             WHERE room_type_id = ? AND date >= ? AND date <= ?
             ORDER BY date ASC
         """, (room_type, start, end)).fetchall()
-        return {r["date"]: {"price": float(r["price"]), "left": int(r["left"])} for r in rows}
+        db_data = {r["date"]: {"price": float(r["price"]), "left": int(r["left"])} for r in rows}
+
+        while d <= e:
+            day = d.date().isoformat()
+            if day in db_data:
+                out[day] = db_data[day]
+            else:
+                base_price = 800 if room_type == 1 else 1200 if room_type == 2 else 1500
+                seasonal_bonus = 200 if d.month in [7, 8, 12] else 0
+                out[day] = {
+                    "price": float(base_price + seasonal_bonus + randint(-50, 50)),
+                    "left": randint(5, 20)
+                }
+            d += timedelta(days=1)
+    return out
 
 # =========================
 # Compatibility / Demo endpoint
@@ -256,6 +267,9 @@ def serve_pdf(filename: str):
         headers={"Content-Disposition": f"inline; filename={filename}"}
     )
 
+# =========================
+# Booking endpoints
+# =========================
 class BookIn(BaseModel):
     room_type: int
     check_in: str
